@@ -123,9 +123,12 @@ static int umrk__prompt_port(const umrk_ssh_config *config, char *out, size_t ou
 static int umrk__pick_start_dir(umrk_ssh_app *app) {
     cat_file_picker_opts opts = cat_file_picker_default_opts("Select Start Folder");
     cat_file_picker_result result;
-    const char *root_path = CAT_PLATFORM_IS_DEVICE ? "/mnt/sdcard" : "/";
+    const char *root_path = CAT_PLATFORM_IS_DEVICE ? getenv("SDCARD_PATH") : "/";
     int rc;
 
+    if (!root_path || !root_path[0]) {
+        root_path = app->config.start_dir[0] ? app->config.start_dir : "/";
+    }
     opts.mode = CAT_FILE_PICKER_DIRS;
     opts.root_path = root_path;
     opts.initial_path = app->config.start_dir[0] ? app->config.start_dir : root_path;

@@ -8,7 +8,7 @@
 #define UMRK_SSH_DEFAULT_PORT 2222
 #define UMRK_SSH_DEFAULT_USERNAME "sshadmin"
 #define UMRK_SSH_DEFAULT_BIND "0.0.0.0:2222"
-#define UMRK_SSH_DEFAULT_START_DIR "/mnt/sdcard"
+#define UMRK_SSH_DEFAULT_START_DIR ""
 
 typedef struct {
     char username[64];

@@ -9,6 +9,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#define UMRK_SSH_MLP1_DEFAULT_INTERNAL_DATA_PATH "/userdata"
+#define UMRK_SSH_MLP1_DEFAULT_SDCARD_PATH "/mnt/sdcard"
+
 static void umrk__set_error(char *error, size_t error_len, const char *fmt, ...) {
     va_list args;
 
@@ -26,6 +29,23 @@ static int umrk__path_join(char *out, size_t out_len, const char *base, const ch
         return -1;
     }
     return snprintf(out, out_len, "%s/%s", base, suffix) >= (int)out_len ? -1 : 0;
+}
+
+static const char *umrk__env_value(const char *name) {
+    const char *value = getenv(name);
+    return (value && value[0]) ? value : NULL;
+}
+
+static const char *umrk__default_start_dir(void) {
+    const char *sdcard = umrk__env_value("SDCARD_PATH");
+    if (sdcard) {
+        return sdcard;
+    }
+#ifdef PLATFORM_MLP1
+    return UMRK_SSH_MLP1_DEFAULT_SDCARD_PATH;
+#else
+    return "/";
+#endif
 }
 
 static int umrk__parse_port_value(const char *text, int *port_out, char *error, size_t error_len) {
@@ -223,12 +243,12 @@ void umrk_ssh_config_set_defaults(umrk_ssh_config *cfg) {
     memset(cfg, 0, sizeof(*cfg));
     snprintf(cfg->username, sizeof(cfg->username), "%s", UMRK_SSH_DEFAULT_USERNAME);
     snprintf(cfg->bind_address, sizeof(cfg->bind_address), "%s", UMRK_SSH_DEFAULT_BIND);
-    snprintf(cfg->start_dir, sizeof(cfg->start_dir), "%s", UMRK_SSH_DEFAULT_START_DIR);
+    snprintf(cfg->start_dir, sizeof(cfg->start_dir), "%s", umrk__default_start_dir());
 }
 
 int umrk_ssh_paths_init(umrk_ssh_paths *paths, char *error, size_t error_len) {
-    const char *state_root = getenv("UMRK_SSH_STATE_DIR");
-    const char *app_root = getenv("UMRK_SSH_APP_ROOT");
+    const char *state_root = umrk__env_value("UMRK_SSH_STATE_DIR");
+    const char *app_root = umrk__env_value("UMRK_SSH_APP_ROOT");
 
     if (!paths) {
         umrk__set_error(error, error_len, "%s", "missing paths struct");
@@ -254,7 +274,18 @@ int umrk_ssh_paths_init(umrk_ssh_paths *paths, char *error, size_t error_len) {
         }
     } else {
 #ifdef PLATFORM_MLP1
-        snprintf(paths->state_root, sizeof(paths->state_root), "%s", "/userdata/umrk-ssh-server");
+        const char *state_base = umrk__env_value("UMRK_INTERNAL_DATA_PATH");
+        if (!state_base) {
+            state_base = umrk__env_value("USERDATA_PATH");
+        }
+        if (!state_base) {
+            state_base = UMRK_SSH_MLP1_DEFAULT_INTERNAL_DATA_PATH;
+        }
+        if (umrk__path_join(paths->state_root, sizeof(paths->state_root),
+                            state_base, "umrk-ssh-server") != 0) {
+            umrk__set_error(error, error_len, "%s", "state root path too long");
+            return -1;
+        }
 #else
         if (snprintf(paths->state_root, sizeof(paths->state_root), "%s/build/runtime", paths->app_root) >= (int)sizeof(paths->state_root)) {
             umrk__set_error(error, error_len, "%s", "desktop state root path too long");

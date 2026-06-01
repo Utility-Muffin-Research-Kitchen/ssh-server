@@ -39,7 +39,6 @@ cannot simultaneously use UID 0 and fully disable root logins.
 ## Build
 
 ```sh
-cd /Volumes/Storage/UMRK/ssh-server
 make native
 make package
 make mlp
@@ -49,14 +48,12 @@ make package-mlp1
 ## Run desktop preview
 
 ```sh
-cd /Volumes/Storage/UMRK/ssh-server
 make run-native
 ```
 
 ## Stage the pak over ADB
 
 ```sh
-cd /Volumes/Storage/UMRK/ssh-server
 make adb-stage-pak-mlp1
 ```
 
@@ -75,9 +72,9 @@ make adb-stage-pak-mlp1
 | --- | --- |
 | Account name | `sshadmin` |
 | Port | `2222` |
-| Starting folder | `/mnt/sdcard` |
-| Host keys | `/userdata/umrk-ssh-server/hostkeys/` |
-| Config root | `/userdata/umrk-ssh-server/` |
+| Starting folder | `SDCARD_PATH` |
+| Host keys | `$UMRK_INTERNAL_DATA_PATH/umrk-ssh-server/hostkeys/` |
+| Config root | `$UMRK_INTERNAL_DATA_PATH/umrk-ssh-server/` |
 | Startup mode | manual only |
 
 ## Repo notes
