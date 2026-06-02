@@ -17,6 +17,7 @@ CATASTROPHE_RES := $(CATASTROPHE_DIR)/res
 DEFAULT_CJSON_DIR := $(if $(wildcard ../Jawaka/third_party/cjson/cJSON.c),$(abspath ../Jawaka/third_party/cjson),third_party/cjson)
 CJSON_DIR ?= $(DEFAULT_CJSON_DIR)
 CJSON_SRC := $(CJSON_DIR)/cJSON.c
+CJSON_HEADER := $(wildcard $(CJSON_DIR)/cJSON.h)
 
 SDL_CFLAGS := $(shell pkg-config --cflags sdl2 SDL2_ttf SDL2_image)
 SDL_LDFLAGS := $(shell pkg-config --libs sdl2 SDL2_ttf SDL2_image)
@@ -35,10 +36,15 @@ APP_SRCS := \
 	internal/account.c \
 	internal/runtime.c \
 	$(CJSON_SRC)
+APP_HDRS := $(wildcard internal/*.h)
+CAT_HEADERS := $(wildcard $(CATASTROPHE_INCLUDE)/*.h)
+APP_DEPS := $(APP_SRCS) $(APP_HDRS) $(CAT_HEADERS) $(CJSON_HEADER)
 
 APP_BIN := $(BUILD)/bin/ssh-server
 PACKAGE_ROOT := $(BUILD)/package
 PACKAGE_DIR := $(PACKAGE_ROOT)/SSHServer.pak
+MLP1_BUILD ?= build/mlp1
+MLP1_APP_BIN := $(MLP1_BUILD)/bin/ssh-server
 
 .PHONY: all native run-native package package-mlp1 mlp adb-stage-pak adb-stage-pak-mlp1 clean check-catastrophe check-sdl
 
@@ -57,7 +63,7 @@ check-sdl:
 	@pkg-config --exists sdl2 SDL2_ttf SDL2_image 2>/dev/null || \
 		( echo "SDL2 libraries not found. Install with: brew install sdl2 sdl2_ttf sdl2_image" && exit 1 )
 
-$(APP_BIN): $(APP_SRCS) $(CATASTROPHE_HEADER) | $(BUILD)/bin check-catastrophe check-sdl
+$(APP_BIN): $(APP_DEPS) | $(BUILD)/bin check-catastrophe check-sdl
 	$(CC) $(CFLAGS_COMMON) -o "$@" $(APP_SRCS) $(LDLIBS_COMMON)
 
 run-native: $(APP_BIN)
@@ -81,23 +87,32 @@ package: $(APP_BIN)
 	@find "$(PACKAGE_DIR)" -maxdepth 3 -type f -print | sort
 
 package-mlp1: mlp dropbear-mlp1
-	$(MAKE) BUILD=build/mlp1 package
+	@$(MAKE) BUILD="$(MLP1_BUILD)" package
 
-mlp:
-	docker run --rm \
+mlp: $(MLP1_APP_BIN)
+
+ifneq ($(APP_BIN),$(MLP1_APP_BIN))
+$(MLP1_APP_BIN): $(APP_DEPS) Makefile ports/mlp1/Makefile
+	@docker run --rm \
 		-v "$(WORKSPACE_ROOT)":/workspace \
 		-w /workspace/ssh-server \
 		"$(MLP1_TOOLCHAIN_IMAGE)" \
-		make -f ports/mlp1/Makefile all
+		make -f ports/mlp1/Makefile NATIVE_MAKE_FLAGS=-B all
+endif
 
 dropbear-mlp1:
-	BUILD_DIR=build/mlp1 DROPBEAR_VERSION="$(DROPBEAR_VERSION)" MLP1_TOOLCHAIN_IMAGE="$(MLP1_TOOLCHAIN_IMAGE)" scripts/build-dropbear-mlp1.sh
+	@BUILD_DIR="$(MLP1_BUILD)" \
+		DROPBEAR_VERSION="$(DROPBEAR_VERSION)" \
+		DROPBEAR_FORCE_REBUILD="$(DROPBEAR_FORCE_REBUILD)" \
+		DROPBEAR_VERBOSE="$(DROPBEAR_VERBOSE)" \
+		MLP1_TOOLCHAIN_IMAGE="$(MLP1_TOOLCHAIN_IMAGE)" \
+		scripts/build-dropbear-mlp1.sh
 
 adb-stage-pak: package
-	scripts/adb-stage-pak.sh
+	@scripts/adb-stage-pak.sh
 
 adb-stage-pak-mlp1: package-mlp1
-	BUILD_DIR=build/mlp1 scripts/adb-stage-pak.sh
+	@BUILD_DIR="$(MLP1_BUILD)" scripts/adb-stage-pak.sh
 
 clean:
 	rm -rf "$(BUILD)"
