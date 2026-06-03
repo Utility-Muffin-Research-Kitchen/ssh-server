@@ -9,7 +9,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define UMRK_SSH_MLP1_DEFAULT_INTERNAL_DATA_PATH "/userdata"
 #define UMRK_SSH_MLP1_DEFAULT_SDCARD_PATH "/mnt/sdcard"
 
 static void umrk__set_error(char *error, size_t error_len, const char *fmt, ...) {
@@ -274,12 +273,19 @@ int umrk_ssh_paths_init(umrk_ssh_paths *paths, char *error, size_t error_len) {
         }
     } else {
 #ifdef PLATFORM_MLP1
-        const char *state_base = umrk__env_value("UMRK_INTERNAL_DATA_PATH");
+        char default_userdata[PATH_MAX];
+        const char *state_base = umrk__env_value("USERDATA_PATH");
         if (!state_base) {
-            state_base = umrk__env_value("USERDATA_PATH");
-        }
-        if (!state_base) {
-            state_base = UMRK_SSH_MLP1_DEFAULT_INTERNAL_DATA_PATH;
+            const char *sdcard = umrk__env_value("SDCARD_PATH");
+            if (!sdcard) {
+                sdcard = UMRK_SSH_MLP1_DEFAULT_SDCARD_PATH;
+            }
+            if (umrk__path_join(default_userdata, sizeof(default_userdata),
+                                sdcard, ".userdata/mlp1") != 0) {
+                umrk__set_error(error, error_len, "%s", "default userdata path too long");
+                return -1;
+            }
+            state_base = default_userdata;
         }
         if (umrk__path_join(paths->state_root, sizeof(paths->state_root),
                             state_base, "umrk-ssh-server") != 0) {

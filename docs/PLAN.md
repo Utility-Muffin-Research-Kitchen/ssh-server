@@ -37,13 +37,13 @@ the highest-risk part of the plan.
 - account name: `sshadmin`
 - port: `2222`
 - starting folder: `/mnt/sdcard`
-- config root: `/userdata/umrk-ssh-server/`
+- config root: `$USERDATA_PATH/umrk-ssh-server/`
 - startup mode: manual only
 
 ## 4. Proposed persisted state
 
 ```text
-/userdata/umrk-ssh-server/
+$USERDATA_PATH/umrk-ssh-server/
   config.ini
   hostkeys/
   logs/
@@ -123,7 +123,7 @@ Tasks:
 
 1. Show server status, account name, port, and start directory.
 2. Add editable settings rows and validation.
-3. Persist config under `/userdata/umrk-ssh-server/`.
+3. Persist config under `$USERDATA_PATH/umrk-ssh-server/`.
 4. Surface clear status and failure messages.
 
 Exit condition:

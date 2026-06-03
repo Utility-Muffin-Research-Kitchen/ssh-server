@@ -73,8 +73,8 @@ make adb-stage-pak-mlp1
 | Account name | `sshadmin` |
 | Port | `2222` |
 | Starting folder | `SDCARD_PATH` |
-| Host keys | `$UMRK_INTERNAL_DATA_PATH/umrk-ssh-server/hostkeys/` |
-| Config root | `$UMRK_INTERNAL_DATA_PATH/umrk-ssh-server/` |
+| Host keys | `$USERDATA_PATH/umrk-ssh-server/hostkeys/` |
+| Config root | `$USERDATA_PATH/umrk-ssh-server/` |
 | Startup mode | manual only |
 
 ## Repo notes

@@ -40,7 +40,7 @@ service or autostart behavior in the first milestone.
 App state should live in an app-owned directory under:
 
 ```text
-/userdata/umrk-ssh-server/
+$USERDATA_PATH/umrk-ssh-server/
 ```
 
 This directory should hold config, generated host keys, logs, and any runtime
