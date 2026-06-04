@@ -1,6 +1,7 @@
 #include "runtime.h"
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -109,6 +110,123 @@ static int umrk__pidfile_path(const umrk_ssh_paths *paths, char *out, size_t out
     return umrk__path_join(out, out_len, paths->run_dir, "dropbear.pid");
 }
 
+static bool umrk__is_pid_dir(const char *name) {
+    if (!name || !name[0]) {
+        return false;
+    }
+    for (size_t i = 0; name[i] != '\0'; ++i) {
+        if (name[i] < '0' || name[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+static int umrk__read_proc_cmdline(int pid, char *out, size_t out_len) {
+    char path[64];
+    FILE *fp;
+    size_t n;
+
+    if (!out || out_len == 0) {
+        return -1;
+    }
+    out[0] = '\0';
+    if (snprintf(path, sizeof(path), "/proc/%d/cmdline", pid) >= (int)sizeof(path)) {
+        return -1;
+    }
+
+    fp = fopen(path, "rb");
+    if (!fp) {
+        return -1;
+    }
+    n = fread(out, 1, out_len - 1, fp);
+    fclose(fp);
+    if (n == 0) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < n; ++i) {
+        if (out[i] == '\0') {
+            out[i] = ' ';
+        }
+    }
+    out[n] = '\0';
+    return 0;
+}
+
+static bool umrk__cmdline_matches_dropbear(const umrk_ssh_paths *paths, const char *cmdline) {
+    if (!paths || !cmdline || !strstr(cmdline, "dropbear")) {
+        return false;
+    }
+    if (paths->bundled_dropbear[0] && strstr(cmdline, paths->bundled_dropbear)) {
+        return true;
+    }
+    if (paths->hostkeys_dir[0] && strstr(cmdline, paths->hostkeys_dir)) {
+        return true;
+    }
+    return false;
+}
+
+static int umrk__find_running_dropbear(const umrk_ssh_paths *paths, int *pid_out) {
+    DIR *dir;
+    struct dirent *entry;
+
+    if (!paths) {
+        return 0;
+    }
+
+    dir = opendir("/proc");
+    if (!dir) {
+        return 0;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        char cmdline[4096];
+        int pid;
+
+        if (!umrk__is_pid_dir(entry->d_name)) {
+            continue;
+        }
+        pid = atoi(entry->d_name);
+        if (pid <= 0 || kill(pid, 0) != 0) {
+            continue;
+        }
+        if (umrk__read_proc_cmdline(pid, cmdline, sizeof(cmdline)) != 0) {
+            continue;
+        }
+        if (!umrk__cmdline_matches_dropbear(paths, cmdline)) {
+            continue;
+        }
+
+        closedir(dir);
+        if (pid_out) {
+            *pid_out = pid;
+        }
+        return 1;
+    }
+
+    closedir(dir);
+    return 0;
+}
+
+static void umrk__record_pidfile(const umrk_ssh_paths *paths, int pid) {
+    char pidfile[PATH_MAX];
+    FILE *fp;
+
+    if (!paths || pid <= 0 || umrk__pidfile_path(paths, pidfile, sizeof(pidfile)) != 0) {
+        return;
+    }
+    if (umrk_ssh_ensure_dir(paths->run_dir, 0755, NULL, 0) != 0) {
+        return;
+    }
+    fp = fopen(pidfile, "w");
+    if (!fp) {
+        return;
+    }
+    fprintf(fp, "%d\n", pid);
+    fclose(fp);
+}
+
 static int umrk__interface_priority(const char *name) {
     if (!name) {
         return 0;
@@ -193,16 +311,48 @@ int umrk_ssh_server_is_running(const umrk_ssh_paths *paths, int *pid_out) {
 
     fp = fopen(pidfile, "r");
     if (!fp) {
+        if (umrk__find_running_dropbear(paths, &pid)) {
+            umrk__record_pidfile(paths, pid);
+            if (pid_out) {
+                *pid_out = pid;
+            }
+            return 1;
+        }
         return 0;
     }
     if (fscanf(fp, "%d", &pid) != 1 || pid <= 0) {
         fclose(fp);
+        if (umrk__find_running_dropbear(paths, &pid)) {
+            umrk__record_pidfile(paths, pid);
+            if (pid_out) {
+                *pid_out = pid;
+            }
+            return 1;
+        }
         return 0;
     }
     fclose(fp);
 
     if (kill(pid, 0) != 0) {
-        return 0;
+        if (!umrk__find_running_dropbear(paths, &pid)) {
+            return 0;
+        }
+        umrk__record_pidfile(paths, pid);
+        if (pid_out) {
+            *pid_out = pid;
+        }
+        return 1;
+    }
+
+    {
+        char cmdline[4096];
+        if (umrk__read_proc_cmdline(pid, cmdline, sizeof(cmdline)) != 0 ||
+            !umrk__cmdline_matches_dropbear(paths, cmdline)) {
+            if (!umrk__find_running_dropbear(paths, &pid)) {
+                return 0;
+            }
+            umrk__record_pidfile(paths, pid);
+        }
     }
 
     if (pid_out) {
