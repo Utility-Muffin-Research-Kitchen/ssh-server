@@ -81,6 +81,7 @@ package: $(APP_BIN)
 	@cp -f "pak/launch.sh" "$(PACKAGE_DIR)/launch.sh"
 	@cp -f "pak/pak.json" "$(PACKAGE_DIR)/pak.json"
 	@if [ -f "$(CATASTROPHE_RES)/font.ttf" ]; then cp -f "$(CATASTROPHE_RES)/font.ttf" "$(PACKAGE_DIR)/res/font.ttf"; fi
+	@if [ -d "pak/res" ]; then cp -Rf pak/res/. "$(PACKAGE_DIR)/res/"; fi
 	@chmod 755 "$(PACKAGE_DIR)/launch.sh" "$(PACKAGE_DIR)/bin/ssh-server"
 	@if [ -f "$(BUILD)/runtime/bin/dropbear" ]; then cp -f "$(BUILD)/runtime/bin/dropbear" "$(PACKAGE_DIR)/runtime/bin/dropbear"; chmod 755 "$(PACKAGE_DIR)/runtime/bin/dropbear"; fi
 	@if [ -f "$(BUILD)/runtime/bin/dropbearkey" ]; then cp -f "$(BUILD)/runtime/bin/dropbearkey" "$(PACKAGE_DIR)/runtime/bin/dropbearkey"; chmod 755 "$(PACKAGE_DIR)/runtime/bin/dropbearkey"; fi
