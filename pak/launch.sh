@@ -7,10 +7,10 @@ MLP1_DEFAULT_SDCARD_PATH=/mnt/sdcard
 
 if [ -n "${UMRK_ENV_FILE:-}" ] && [ -f "$UMRK_ENV_FILE" ]; then
     . "$UMRK_ENV_FILE"
-elif [ -n "${SDCARD_PATH:-}" ] && [ -f "$SDCARD_PATH/umrk-launcher/env.sh" ]; then
-    . "$SDCARD_PATH/umrk-launcher/env.sh"
-elif [ -f "$PAK_SDCARD_ROOT/umrk-launcher/env.sh" ]; then
-    . "$PAK_SDCARD_ROOT/umrk-launcher/env.sh"
+elif [ -n "${SDCARD_PATH:-}" ] && [ -f "$SDCARD_PATH/.system/leaf/launcher/env.sh" ]; then
+    . "$SDCARD_PATH/.system/leaf/launcher/env.sh"
+elif [ -f "$PAK_SDCARD_ROOT/.system/leaf/launcher/env.sh" ]; then
+    . "$PAK_SDCARD_ROOT/.system/leaf/launcher/env.sh"
 fi
 
 if [ -z "${PLATFORM:-}" ]; then

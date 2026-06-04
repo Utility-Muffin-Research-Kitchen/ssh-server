@@ -281,7 +281,7 @@ int umrk_ssh_paths_init(umrk_ssh_paths *paths, char *error, size_t error_len) {
                 sdcard = UMRK_SSH_MLP1_DEFAULT_SDCARD_PATH;
             }
             if (umrk__path_join(default_userdata, sizeof(default_userdata),
-                                sdcard, ".userdata/mlp1") != 0) {
+                                sdcard, ".system/leaf/userdata/mlp1") != 0) {
                 umrk__set_error(error, error_len, "%s", "default userdata path too long");
                 return -1;
             }
