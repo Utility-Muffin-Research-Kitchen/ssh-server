@@ -9,7 +9,7 @@ Dropbear-backed Jawaka app for Miniloong Pocket 1 Stock OS.
 - Catastrophe-powered GUI
 - manual start/stop from the app UI
 - persistent app-owned settings and runtime state
-- package as a Jawaka `Apps/<Name>.pak/` app
+- package as a Jawaka `Apps/<platform>/<Name>.pak/` app
 - current auth target: a dedicated app-managed admin account with
   root-equivalent access, without changing the stock `root` password
 

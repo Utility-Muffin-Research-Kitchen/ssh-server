@@ -231,7 +231,8 @@ static int umrk__interface_priority(const char *name) {
     if (!name) {
         return 0;
     }
-    if (strcmp(name, "wlan0") == 0) {
+    const char *preferred = getenv("UMRK_SSH_PRIMARY_IFACE");
+    if (preferred && preferred[0] && strcmp(name, preferred) == 0) {
         return 3;
     }
     if (strcmp(name, "ap0") == 0 || strcmp(name, "eth0") == 0) {
@@ -240,7 +241,7 @@ static int umrk__interface_priority(const char *name) {
     return 1;
 }
 
-static int umrk__detect_reachable_ip(char *out, size_t out_len) {
+static int umrk__detect_reachable_ip(char *out, size_t out_len, int *family_out) {
     const char *override = getenv("UMRK_SSH_DEVICE_IP");
 
     if (!out || out_len == 0) {
@@ -248,17 +249,25 @@ static int umrk__detect_reachable_ip(char *out, size_t out_len) {
     }
 
     if (override && override[0] != '\0') {
+        if (family_out) {
+            *family_out = strchr(override, ':') ? AF_INET6 : AF_INET;
+        }
         return snprintf(out, out_len, "%s", override) >= (int)out_len ? -1 : 0;
     }
 
 #if defined(PLATFORM_MAC)
+    if (family_out) {
+        *family_out = AF_INET;
+    }
     return snprintf(out, out_len, "%s", "127.0.0.1") >= (int)out_len ? -1 : 0;
 #else
     {
         struct ifaddrs *ifaddr = NULL;
         struct ifaddrs *ifa = NULL;
-        char best_addr[64] = {0};
-        int best_priority = 0;
+        char best_v4[INET_ADDRSTRLEN] = {0};
+        char best_v6[INET6_ADDRSTRLEN] = {0};
+        int best_v4_priority = 0;
+        int best_v6_priority = 0;
 
         if (getifaddrs(&ifaddr) != 0) {
             return -1;
@@ -275,27 +284,71 @@ static int umrk__detect_reachable_ip(char *out, size_t out_len) {
             }
 
             priority = umrk__interface_priority(ifa->ifa_name);
-            if (priority < best_priority) {
+            if (priority < best_v4_priority) {
                 continue;
             }
             if (!inet_ntop(AF_INET,
                            &((struct sockaddr_in *)ifa->ifa_addr)->sin_addr,
-                           best_addr,
-                           (socklen_t)sizeof(best_addr))) {
+                           best_v4,
+                           (socklen_t)sizeof(best_v4))) {
                 continue;
             }
 
-            best_priority = priority;
+            best_v4_priority = priority;
             if (priority >= 3) {
                 break;
             }
         }
 
-        freeifaddrs(ifaddr);
-        if (best_addr[0] == '\0') {
-            return -1;
+        if (best_v4[0] == '\0') {
+            for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+                const struct in6_addr *addr;
+                int priority;
+
+                if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET6) {
+                    continue;
+                }
+                if ((ifa->ifa_flags & IFF_UP) == 0 || (ifa->ifa_flags & IFF_LOOPBACK) != 0) {
+                    continue;
+                }
+
+                addr = &((struct sockaddr_in6 *)ifa->ifa_addr)->sin6_addr;
+                if (IN6_IS_ADDR_UNSPECIFIED(addr) ||
+                    IN6_IS_ADDR_LOOPBACK(addr) ||
+                    IN6_IS_ADDR_LINKLOCAL(addr) ||
+                    IN6_IS_ADDR_MULTICAST(addr)) {
+                    continue;
+                }
+
+                priority = umrk__interface_priority(ifa->ifa_name);
+                if (priority < best_v6_priority) {
+                    continue;
+                }
+                if (!inet_ntop(AF_INET6, addr, best_v6, (socklen_t)sizeof(best_v6))) {
+                    continue;
+                }
+
+                best_v6_priority = priority;
+                if (priority >= 3) {
+                    break;
+                }
+            }
         }
-        return snprintf(out, out_len, "%s", best_addr) >= (int)out_len ? -1 : 0;
+
+        freeifaddrs(ifaddr);
+        if (best_v4[0] != '\0') {
+            if (family_out) {
+                *family_out = AF_INET;
+            }
+            return snprintf(out, out_len, "%s", best_v4) >= (int)out_len ? -1 : 0;
+        }
+        if (best_v6[0] != '\0') {
+            if (family_out) {
+                *family_out = AF_INET6;
+            }
+            return snprintf(out, out_len, "%s", best_v6) >= (int)out_len ? -1 : 0;
+        }
+        return -1;
     }
 #endif
 }
@@ -421,7 +474,8 @@ int umrk_ssh_generate_hostkeys(const umrk_ssh_paths *paths, int *generated_out,
 }
 
 int umrk_ssh_format_reachable_address(const umrk_ssh_config *cfg, char *out, size_t out_len) {
-    char ip[64];
+    char ip[128];
+    int family = AF_UNSPEC;
     int port = 0;
 
     if (!cfg || !out || out_len == 0) {
@@ -431,7 +485,10 @@ int umrk_ssh_format_reachable_address(const umrk_ssh_config *cfg, char *out, siz
         snprintf(out, out_len, "%s", "Invalid port");
         return -1;
     }
-    if (umrk__detect_reachable_ip(ip, sizeof(ip)) == 0) {
+    if (umrk__detect_reachable_ip(ip, sizeof(ip), &family) == 0) {
+        if (family == AF_INET6) {
+            return snprintf(out, out_len, "[%s]:%d", ip, port) >= (int)out_len ? -1 : 0;
+        }
         return snprintf(out, out_len, "%s:%d", ip, port) >= (int)out_len ? -1 : 0;
     }
     return snprintf(out, out_len, "Offline (port %d)", port) >= (int)out_len ? -1 : 1;

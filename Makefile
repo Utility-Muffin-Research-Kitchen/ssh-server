@@ -5,6 +5,7 @@ CSTD := -std=c11
 CWARN := -Wall -Wextra -Wpedantic -Wno-unused-parameter
 CDEBUG ?= -g -O0
 BUILD ?= build
+PLATFORM ?= mac
 WORKSPACE_ROOT ?= $(abspath ..)
 MLP1_TOOLCHAIN_IMAGE ?= ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain:local
 DROPBEAR_VERSION ?= 2025.88
@@ -46,7 +47,7 @@ PACKAGE_DIR := $(PACKAGE_ROOT)/SSHServer.pak
 MLP1_BUILD ?= build/mlp1
 MLP1_APP_BIN := $(MLP1_BUILD)/bin/ssh-server
 
-.PHONY: all native run-native package package-mlp1 mlp adb-stage-pak adb-stage-pak-mlp1 clean check-catastrophe check-sdl
+.PHONY: all native run-native package package-build package-platform package-mlp1 mlp adb-stage-pak adb-stage-pak-mlp1 clean check-catastrophe check-sdl
 
 all: native
 
@@ -75,11 +76,14 @@ run-native: $(APP_BIN)
 	"$(APP_BIN)"
 
 package: $(APP_BIN)
+	@$(MAKE) BUILD="$(BUILD)" PLATFORM="$(PLATFORM)" package-build
+
+package-build:
 	@rm -rf "$(PACKAGE_ROOT)"
 	@mkdir -p "$(PACKAGE_DIR)/bin" "$(PACKAGE_DIR)/res" "$(PACKAGE_DIR)/runtime/bin"
 	@cp -f "$(APP_BIN)" "$(PACKAGE_DIR)/bin/ssh-server"
 	@cp -f "pak/launch.sh" "$(PACKAGE_DIR)/launch.sh"
-	@cp -f "pak/pak.json" "$(PACKAGE_DIR)/pak.json"
+	@printf '{ "name": "SSH Server", "icon": "res/icon.png", "platform": "$(PLATFORM)", "pak_version": "0.1.0", "min_jawaka_version": "0.0.1" }\n' > "$(PACKAGE_DIR)/pak.json"
 	@if [ -f "$(CATASTROPHE_RES)/font.ttf" ]; then cp -f "$(CATASTROPHE_RES)/font.ttf" "$(PACKAGE_DIR)/res/font.ttf"; fi
 	@if [ -d "pak/res" ]; then cp -Rf pak/res/. "$(PACKAGE_DIR)/res/"; fi
 	@chmod 755 "$(PACKAGE_DIR)/launch.sh" "$(PACKAGE_DIR)/bin/ssh-server"
@@ -88,7 +92,15 @@ package: $(APP_BIN)
 	@find "$(PACKAGE_DIR)" -maxdepth 3 -type f -print | sort
 
 package-mlp1: mlp dropbear-mlp1
-	@$(MAKE) BUILD="$(MLP1_BUILD)" package
+	@$(MAKE) BUILD="$(MLP1_BUILD)" PLATFORM=mlp1 package-build
+
+package-platform:
+	@test -n "$(PLATFORM)" || { echo "usage: make package-platform PLATFORM=<platform>" >&2; exit 1; }
+	@case "$(PLATFORM)" in \
+		mlp1) $(MAKE) package-mlp1 ;; \
+		mac) $(MAKE) PLATFORM=mac package ;; \
+		*) echo "unsupported ssh-server package platform: $(PLATFORM)" >&2; exit 1 ;; \
+	esac
 
 mlp: $(MLP1_APP_BIN)
 

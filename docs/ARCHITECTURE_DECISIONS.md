@@ -77,5 +77,6 @@ through Dropbear alone.
 ## 9. Jawaka integration contract
 
 The deliverable from this repo should be a Jawaka-launchable pak following the
-existing `Apps/<Name>.pak/` convention, with this repo owning the packaged
-payload layout and launch wrapper.
+platform-guarded `Apps/<platform>/<Name>.pak/` convention, with this repo owning
+the packaged payload layout and launch wrapper. Leaf owns staging the pak into
+the correct platform directory.
