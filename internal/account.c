@@ -80,6 +80,21 @@ static int umrk__copy_file(const char *src, const char *dst, mode_t mode,
     return 0;
 }
 
+static int umrk__ensure_rootfs_writable(char *error, size_t error_len) {
+#ifdef PLATFORM_MLP1
+    if (system("mount -o remount,rw / >/dev/null 2>&1") == 0 ||
+        system("mount -o remount,rw /dev/root / >/dev/null 2>&1") == 0) {
+        return 0;
+    }
+    umrk__set_error(error, error_len, "%s", "root filesystem is read-only; remount rw failed");
+    return -1;
+#else
+    (void)error;
+    (void)error_len;
+    return 0;
+#endif
+}
+
 static int umrk__validate_username(const char *username, char *error, size_t error_len) {
     size_t i;
 
@@ -360,8 +375,15 @@ int umrk_ssh_apply_account(const umrk_ssh_config *cfg, const umrk_ssh_paths *pat
     }
 
     if (umrk_ssh_ensure_dir(paths->state_root, 0755, status, status_len) != 0 ||
-        umrk_ssh_ensure_dir(paths->backups_dir, 0755, status, status_len) != 0 ||
-        umrk_ssh_ensure_dir(cfg->start_dir, 0755, status, status_len) != 0) {
+        umrk_ssh_ensure_dir(paths->backups_dir, 0755, status, status_len) != 0) {
+        return -1;
+    }
+
+    if (umrk__ensure_rootfs_writable(status, status_len) != 0) {
+        return -1;
+    }
+
+    if (umrk_ssh_ensure_dir(cfg->start_dir, 0755, status, status_len) != 0) {
         return -1;
     }
 
