@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Generate ssh-server's launcher icon (pak/res/icon.png) with no third-party deps.
 
-A rounded square tile in the Jawaka "Leaf" highlight green carrying a dark
-terminal prompt glyph (chevron + underscore) — so SSH Server reads as a
-first-class app rather than the generic Leaf "_apps" badge. Rendered with
-analytic signed-distance fields for anti-aliased edges, encoded as a PNG using
-only the standard library (zlib + struct).
+A dark terminal window filling the icon — a title bar with three dots and a green
+">_" prompt — so SSH Server reads as a first-class app rather than the generic
+Leaf "_apps" badge. Rendered with analytic signed-distance fields for anti-aliased
+edges, encoded as a PNG using only the standard library (zlib + struct).
 
 Palette mirrors the Leaf scheme in Jawaka/internal/settings/appearance.c.
 Run from the ssh-server repo root:  python3 scripts/make-icon.py
@@ -18,20 +17,27 @@ import zlib
 SIZE = 256
 
 # Leaf palette (#RRGGBB).
-TILE = (0x7F, 0xB0, 0x69)   # highlight green — the tile fill
-GLYPH = (0x0F, 0x16, 0x0E)  # near-black bg green — the prompt glyph
+WINDOW = (0x15, 0x24, 0x0E)  # near-black bg green — the terminal window
+PROMPT = (0x8F, 0xD2, 0x7E)  # light green — the prompt + first dot
+DOT_DIM = (0x57, 0x84, 0x49) # muted green — the other two dots
+FRAME = (0x7F, 0xB0, 0x69)   # leaf highlight green — thin frame (holds shape on dark themes)
+FRAME_W = 7                  # frame thickness (px at 256)
 
 
-def smoothstep_cover(d):
+def cover(d):
     """Coverage in [0,1] for an SDF: inside (d<0) -> 1, with ~1px AA band."""
     return min(1.0, max(0.0, 0.5 - d))
 
 
-def sd_round_box(px, py, cx, cy, half, r):
-    qx = abs(px - cx) - (half - r)
-    qy = abs(py - cy) - (half - r)
+def sd_round_box(px, py, cx, cy, hx, hy, r):
+    qx = abs(px - cx) - (hx - r)
+    qy = abs(py - cy) - (hy - r)
     ax, ay = max(qx, 0.0), max(qy, 0.0)
     return math.hypot(ax, ay) + min(max(qx, qy), 0.0) - r
+
+
+def sd_circle(px, py, cx, cy, r):
+    return math.hypot(px - cx, py - cy) - r
 
 
 def sd_segment(px, py, ax, ay, bx, by, thick):
@@ -49,39 +55,37 @@ def lerp(a, b, t):
 
 
 def render():
+    s = SIZE / 256.0
     c = SIZE / 2.0
-    half = SIZE * 0.43          # tile half-extent (small margin to the edge)
-    radius = SIZE * 0.22        # corner radius
-
-    # Terminal prompt glyph ">_", nudged up so the underscore reads as a
-    # separate baseline line rather than fusing with the chevron's lower arm.
-    chev_cy = c - SIZE * 0.05
-    chev_tip_x = c + SIZE * 0.08
-    chev_x = c - SIZE * 0.13
-    chev_dy = SIZE * 0.14
-    stroke = SIZE * 0.044
-    us_y = c + SIZE * 0.27
-    us_x0, us_x1 = c - SIZE * 0.15, c + SIZE * 0.05
+    whalf, wr = 108 * s, 46 * s             # window fills the icon (small margin)
+    dot_y, dot_r = 56 * s, 9 * s
+    dots = [(58 * s, dot_y, PROMPT), (86 * s, dot_y, DOT_DIM), (114 * s, dot_y, DOT_DIM)]
+    st = 11 * s                             # prompt stroke half-width
+    chev = [(62 * s, 104 * s), (108 * s, 138 * s), (62 * s, 172 * s)]
+    us_x0, us_x1, us_y = 122 * s, 180 * s, 178 * s
 
     px = bytearray()
     for y in range(SIZE):
         px.append(0)  # PNG filter byte (None) per scanline
         for x in range(SIZE):
             sx, sy = x + 0.5, y + 0.5
-            tile_cov = smoothstep_cover(sd_round_box(sx, sy, c, c, half, radius))
-            if tile_cov <= 0.0:
+            win_d = sd_round_box(sx, sy, c, c, whalf, whalf, wr)
+            win_cov = cover(win_d)
+            if win_cov <= 0.0:
                 px.extend((0, 0, 0, 0))
                 continue
 
-            # Glyph coverage: two chevron strokes + an underscore capsule.
-            d = sd_segment(sx, sy, chev_x, chev_cy - chev_dy, chev_tip_x, chev_cy, stroke)
-            d = min(d, sd_segment(sx, sy, chev_x, chev_cy + chev_dy, chev_tip_x, chev_cy, stroke))
-            d = min(d, sd_segment(sx, sy, us_x0, us_y, us_x1, us_y, stroke * 0.9))
-            glyph_cov = smoothstep_cover(d)
+            # Leaf-green frame at the edge, dark window filling the interior.
+            col = FRAME
+            col = lerp(col, WINDOW, cover(win_d + FRAME_W * s))
+            for dx, dy, dc in dots:
+                col = lerp(col, dc, cover(sd_circle(sx, sy, dx, dy, dot_r)))
+            d = sd_segment(sx, sy, chev[0][0], chev[0][1], chev[1][0], chev[1][1], st)
+            d = min(d, sd_segment(sx, sy, chev[1][0], chev[1][1], chev[2][0], chev[2][1], st))
+            d = min(d, sd_segment(sx, sy, us_x0, us_y, us_x1, us_y, st * 0.9))
+            col = lerp(col, PROMPT, cover(d))
 
-            r, g, b = lerp(TILE, GLYPH, glyph_cov)
-            a = int(round(255 * tile_cov))
-            px.extend((r, g, b, a))
+            px.extend((col[0], col[1], col[2], int(round(255 * win_cov))))
     return bytes(px)
 
 
