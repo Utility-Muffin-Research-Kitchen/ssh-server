@@ -276,26 +276,15 @@ int umrk_ssh_paths_init(umrk_ssh_paths *paths, char *error, size_t error_len) {
         char default_userdata[PATH_MAX];
         const char *state_base = umrk__env_value("USERDATA_PATH");
         if (!state_base) {
-            const char *platform_root = umrk__env_value("UMRK_PLATFORM_PATH");
-            if (!platform_root) {
-                platform_root = umrk__env_value("SYSTEM_PATH");
-            }
-            if (platform_root) {
-                if (umrk__path_join(default_userdata, sizeof(default_userdata),
-                                    platform_root, "userdata") != 0) {
-                    umrk__set_error(error, error_len, "%s", "default userdata path too long");
-                    return -1;
-                }
-                state_base = default_userdata;
-            }
-        }
-        if (!state_base) {
+            /* Durable app data lives at the SD root's .userdata/<platform>, not
+               under the release-managed .system payload. Used only when env is
+               absent; Jawaka exports USERDATA_PATH on a normal launch. */
             const char *sdcard = umrk__env_value("SDCARD_PATH");
             if (!sdcard) {
                 sdcard = UMRK_SSH_MLP1_DEFAULT_SDCARD_PATH;
             }
             if (umrk__path_join(default_userdata, sizeof(default_userdata),
-                                sdcard, ".system/leaf/platforms/mlp1/userdata") != 0) {
+                                sdcard, ".userdata/mlp1") != 0) {
                 umrk__set_error(error, error_len, "%s", "default userdata path too long");
                 return -1;
             }
