@@ -93,7 +93,7 @@ $USERDATA_PATH/umrk-ssh-server/
 On MLP1, if `USERDATA_PATH` is missing, the fallback is:
 
 ```text
-$SDCARD_PATH/.system/leaf/platforms/mlp1/userdata/umrk-ssh-server/
+$SDCARD_PATH/.userdata/mlp1/umrk-ssh-server/
 ```
 
 Override the state root explicitly with:
