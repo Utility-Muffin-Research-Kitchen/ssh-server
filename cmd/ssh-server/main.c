@@ -28,8 +28,6 @@ typedef struct {
     char                status[256];
     int                 last_cursor;
     int                 last_visible;
-    cat_status_bar_opts status_bar;      /* resolved once from CAT_STATUS_* env */
-    bool                show_status_bar;  /* whether status_bar has anything to show */
     bool                show_hints;       /* CAT_SHOW_HINTS: gate footers */
 } umrk_ssh_app;
 
@@ -135,9 +133,6 @@ static int umrk__pick_start_dir(umrk_ssh_app *app) {
     opts.mode = CAT_FILE_PICKER_DIRS;
     opts.root_path = root_path;
     opts.initial_path = app->config.start_dir[0] ? app->config.start_dir : root_path;
-    /* Carry the same status bar into the nested picker so chrome is consistent
-       across the app, not just on the top screen. */
-    opts.status_bar = app->show_status_bar ? &app->status_bar : NULL;
 
     rc = cat_file_picker(&opts, &result);
     if (rc == CAT_OK) {
@@ -333,9 +328,9 @@ static int umrk__run_app(umrk_ssh_app *app) {
         .return_on_option_change = true,
     };
 
-    /* Match the launcher's chrome: inherited status bar, and hide the footer
-       when the user disabled button hints in Settings. */
-    opts.status_bar = app->show_status_bar ? &app->status_bar : NULL;
+    /* No status bar in this app — the SSH server is a quick in-and-out, so the
+       top screen stays clean. Still hide the footer when the user disabled
+       button hints in Settings. */
     if (!app->show_hints) {
         opts.footer_count = 0;
     }
@@ -408,10 +403,9 @@ int main(void) {
         return 1;
     }
 
-    /* Inherit the launcher's chrome from the appearance snapshot (CAT_STATUS_* /
-       CAT_SHOW_HINTS, exported by jawakad or defaulted by env.sh) so SSH Server
-       wears the same status bar and hint visibility as a Settings screen. */
-    app.show_status_bar = cat_status_bar_from_env(&app.status_bar);
+    /* Inherit hint visibility from the appearance snapshot (CAT_SHOW_HINTS,
+       exported by jawakad or defaulted by env.sh). No status bar: the SSH app
+       is a quick in-and-out, so the top screen stays clean. */
     app.show_hints = cat_hints_enabled_from_env();
 
     umrk__run_app(&app);
