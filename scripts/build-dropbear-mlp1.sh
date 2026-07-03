@@ -53,7 +53,14 @@ export CC=aarch64-buildroot-linux-gnu-gcc
 export AR=aarch64-buildroot-linux-gnu-ar
 export RANLIB=aarch64-buildroot-linux-gnu-ranlib
 export STRIP=aarch64-buildroot-linux-gnu-strip
-export CFLAGS='-Os'
+if [ -f /opt/mlp1-toolchain/umrk/mlp1-build-flags.env ]; then
+    MLP1_BUILD_PROFILE="${DROPBEAR_MLP1_BUILD_PROFILE:-size}"
+    export MLP1_BUILD_PROFILE
+    . /opt/mlp1-toolchain/umrk/mlp1-build-flags.env
+else
+    UMRK_MLP1_PROFILE_CFLAGS='-Os -mcpu=cortex-a55 -mtune=cortex-a55 -ffunction-sections -fdata-sections -DNDEBUG'
+fi
+export CFLAGS="${DROPBEAR_CFLAGS:-$UMRK_MLP1_PROFILE_CFLAGS}"
 export LDFLAGS=''
 make distclean || true
 ./configure --host=aarch64-buildroot-linux-gnu \

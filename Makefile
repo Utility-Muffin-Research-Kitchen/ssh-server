@@ -3,12 +3,29 @@ SHELL := /bin/bash
 CC ?= cc
 CSTD := -std=c11
 CWARN := -Wall -Wextra -Wpedantic -Wno-unused-parameter
-CDEBUG ?= -g -O0
 BUILD ?= build
 PLATFORM ?= mac
 WORKSPACE_ROOT ?= $(abspath ..)
 MLP1_TOOLCHAIN_IMAGE ?= ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain:local
+MLP1_BUILD_PROFILE ?= release
 DROPBEAR_VERSION ?= 2025.88
+DROPBEAR_MLP1_BUILD_PROFILE ?= size
+CFLAGS_PLATFORM ?=
+LDFLAGS_PLATFORM ?=
+
+ifeq ($(PLATFORM),mlp1)
+MLP1_FLAGS_MK ?= $(firstword $(wildcard /opt/mlp1-toolchain/umrk/mlp1-build-flags.mk $(WORKSPACE_ROOT)/mlp1-toolchain/flags/mlp1-build-flags.mk ../mlp1-toolchain/flags/mlp1-build-flags.mk))
+ifneq ($(MLP1_FLAGS_MK),)
+include $(MLP1_FLAGS_MK)
+else
+UMRK_MLP1_PROFILE_CFLAGS ?= -O2 -mcpu=cortex-a55 -mtune=cortex-a55 -ffunction-sections -fdata-sections -DNDEBUG
+UMRK_MLP1_PROFILE_LDFLAGS ?= -Wl,--gc-sections
+endif
+CDEBUG ?= $(UMRK_MLP1_PROFILE_CFLAGS)
+LDFLAGS_PLATFORM += $(UMRK_MLP1_PROFILE_LDFLAGS)
+else
+CDEBUG ?= -g -O0
+endif
 
 DEFAULT_CATASTROPHE_DIR := $(if $(wildcard ../Catastrophe/include/catastrophe.h),$(abspath ../Catastrophe),third_party/catastrophe)
 CATASTROPHE_DIR ?= $(DEFAULT_CATASTROPHE_DIR)
@@ -24,7 +41,7 @@ SDL_CFLAGS := $(shell pkg-config --cflags sdl2 SDL2_ttf SDL2_image)
 SDL_LDFLAGS := $(shell pkg-config --libs sdl2 SDL2_ttf SDL2_image)
 
 CFLAGS_COMMON := $(CSTD) $(CWARN) $(CDEBUG) $(CFLAGS_PLATFORM) -I. -Iinternal -I$(CATASTROPHE_INCLUDE) -I$(CJSON_DIR) $(SDL_CFLAGS)
-LDLIBS_COMMON := $(SDL_LDFLAGS) -lm -lpthread
+LDLIBS_COMMON := $(LDFLAGS_PLATFORM) $(SDL_LDFLAGS) -lm -lpthread
 ifeq ($(shell uname -s),Darwin)
 LDLIBS_COMMON += -lobjc
 else
@@ -84,6 +101,21 @@ package-build:
 	@cp -f "$(APP_BIN)" "$(PACKAGE_DIR)/bin/ssh-server"
 	@cp -f "pak/launch.sh" "$(PACKAGE_DIR)/launch.sh"
 	@printf '{ "name": "SSH Server", "icon": "res/icon.png", "platform": "$(PLATFORM)", "pak_version": "0.1.0", "min_jawaka_version": "0.0.1" }\n' > "$(PACKAGE_DIR)/pak.json"
+	@if [ "$(PLATFORM)" = "mlp1" ]; then \
+		{ \
+			printf '{\n'; \
+			printf '  "platform": "mlp1",\n'; \
+			printf '  "target_soc": "%s",\n' "$(UMRK_MLP1_TARGET_SOC)"; \
+			printf '  "target_cpu": "%s",\n' "$(UMRK_MLP1_TARGET_CPU)"; \
+			printf '  "build_profile": "%s",\n' "$(MLP1_BUILD_PROFILE)"; \
+			printf '  "dropbear_build_profile": "%s",\n' "$(DROPBEAR_MLP1_BUILD_PROFILE)"; \
+			printf '  "cflags": "%s",\n' "$(CDEBUG)"; \
+			printf '  "ldflags": "%s",\n' "$(LDFLAGS_PLATFORM)"; \
+			printf '  "binaries": ["bin/ssh-server", "runtime/bin/dropbear", "runtime/bin/dropbearkey"],\n'; \
+			printf '  "exceptions": []\n'; \
+			printf '}\n'; \
+		} > "$(PACKAGE_DIR)/build-manifest.json"; \
+	fi
 	@if [ -f "$(CATASTROPHE_RES)/font.ttf" ]; then cp -f "$(CATASTROPHE_RES)/font.ttf" "$(PACKAGE_DIR)/res/font.ttf"; fi
 	@if [ -d "pak/res" ]; then cp -Rf pak/res/. "$(PACKAGE_DIR)/res/"; fi
 	@chmod 755 "$(PACKAGE_DIR)/launch.sh" "$(PACKAGE_DIR)/bin/ssh-server"
@@ -109,6 +141,7 @@ $(MLP1_APP_BIN): $(APP_DEPS) Makefile ports/mlp1/Makefile
 	@docker run --rm \
 		-v "$(WORKSPACE_ROOT)":/workspace \
 		-w /workspace/ssh-server \
+		-e MLP1_BUILD_PROFILE="$(MLP1_BUILD_PROFILE)" \
 		"$(MLP1_TOOLCHAIN_IMAGE)" \
 		make -f ports/mlp1/Makefile NATIVE_MAKE_FLAGS=-B all
 endif
@@ -118,6 +151,8 @@ dropbear-mlp1:
 		DROPBEAR_VERSION="$(DROPBEAR_VERSION)" \
 		DROPBEAR_FORCE_REBUILD="$(DROPBEAR_FORCE_REBUILD)" \
 		DROPBEAR_VERBOSE="$(DROPBEAR_VERBOSE)" \
+		DROPBEAR_MLP1_BUILD_PROFILE="$(DROPBEAR_MLP1_BUILD_PROFILE)" \
+		MLP1_BUILD_PROFILE="$(MLP1_BUILD_PROFILE)" \
 		MLP1_TOOLCHAIN_IMAGE="$(MLP1_TOOLCHAIN_IMAGE)" \
 		scripts/build-dropbear-mlp1.sh
 
