@@ -9,16 +9,27 @@ Primary target is Miniloong Pocket 1 (MLP1) Stock OS.
 ## Current Status
 
 - `cmd/ssh-server/main.c` provides a Catastrophe settings UI.
-- The app can start/stop Dropbear manually from the UI.
+- The app is a Jawaka SVC-1 service (`org.umrk.sshserver`) and controls it over
+  CTL-1 instead of owning a PID file.
+- The UI can run and stop the supervised service. The control client also
+  implements Jawaka's restart, enable, and disable operations for coordinated
+  release integration.
 - MLP1 packages bundle `runtime/bin/dropbear` and `runtime/bin/dropbearkey`.
 - Host keys are generated automatically on first start.
-- Config, host keys, logs, backups, and run state live under the app-owned state
-  root.
+- Config, host keys, optional `authorized_keys`, and the GUI's local log live
+  under the app-owned state root. Jawaka separately owns the bounded service
+  log and last-exit state.
 - The UI shows detected reachable `IP:Port`; only the TCP port is editable.
-- Username/password editors use Catastrophe keyboard prompts.
+- Passwords are converted to salted SHA-512 hashes before persistence. Legacy
+  plaintext config is migrated atomically on first supervised start.
+- The UI shows authentication mode, the ED25519 host-key fingerprint, last-exit
+  status, transition reason, and recent service log lines.
 - Start Folder uses Catastrophe's directory picker.
 - The app can apply a dedicated UID 0 alias account without changing the stock
   `root` password.
+- The bundled Dropbear is patched so its daemon, connection children, and login
+  shells remain in Jawaka's service process group and inherit parent-death
+  protection.
 
 Known limitation: Dropbear's `-w` root-login block rejects every UID 0 account,
 not just the literal `root` username. The current alias-account model preserves
@@ -107,10 +118,13 @@ State layout:
 ```text
 config.ini
 hostkeys/
-logs/ssh-server.txt
-run/dropbear.pid
-backups/
+authorized_keys       # optional; required for key-only mode
+logs/ssh-server.txt   # GUI log; not service lifecycle state
 ```
+
+The service is foreground-only. It has no app-owned PID file, daemon state, or
+persistent `/etc` backup. Jawaka owns service lifetime, stop escalation,
+service logs, and last-exit metadata.
 
 ## Defaults
 
@@ -121,7 +135,8 @@ backups/
 | Displayed address | detected reachable device IP plus port |
 | Starting folder | `SDCARD_PATH`, then `/mnt/sdcard` on MLP1, then `/` |
 | Host keys | `$USERDATA_PATH/umrk-ssh-server/hostkeys/` |
-| Startup mode | manual only |
+| Authentication | password enabled; key-only is selectable when `authorized_keys` exists |
+| Startup mode | supervised, disabled by default |
 
 Useful overrides:
 
@@ -140,5 +155,8 @@ Useful overrides:
   account integration, config model, and packaged payload.
 - `docs/PLAN.md` and `docs/ARCHITECTURE_DECISIONS.md` record design history and
   unresolved auth tradeoffs.
-- Version 1 is manual start/stop only. Boot-time autostart is out of scope for
-  the current app.
+- The service is disabled by default. Jawaka persists explicit enable/disable
+  intent and applies lifecycle policy; the app never installs a boot hook.
+- Removal of the legacy launcher-switcher SSH hook and one-time migration of
+  existing installations are coordinated Release A assembly work, not owned by
+  this repo.

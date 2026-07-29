@@ -13,8 +13,10 @@ RUNTIME_BIN_DIR="$ROOT_DIR/$BUILD_DIR/runtime/bin"
 BUILD_SCRIPT="$ROOT_DIR/$BUILD_DIR/third_party/dropbear-build.sh"
 BUILD_LOG="$ROOT_DIR/$BUILD_DIR/third_party/dropbear-build.log"
 STAMP="$RUNTIME_BIN_DIR/.dropbear-${DROPBEAR_VERSION}.stamp"
+PATCH_DIR="$ROOT_DIR/patches/dropbear"
 SCRIPT_CKSUM=$(cksum "$0" | awk '{print $1 ":" $2}')
-BUILD_ID="version=${DROPBEAR_VERSION} tag=${DROPBEAR_TAG} image=${TOOLCHAIN_IMAGE} script=${SCRIPT_CKSUM}"
+PATCH_CKSUM=$(cksum "$PATCH_DIR"/*.patch | cksum | awk '{print $1 ":" $2}')
+BUILD_ID="version=${DROPBEAR_VERSION} tag=${DROPBEAR_TAG} image=${TOOLCHAIN_IMAGE} script=${SCRIPT_CKSUM} patches=${PATCH_CKSUM}"
 
 mkdir -p "$(dirname "$SOURCE_ARCHIVE")" "$RUNTIME_BIN_DIR"
 
@@ -41,6 +43,10 @@ echo "Building Dropbear ${DROPBEAR_VERSION} for MLP1 (log: $BUILD_LOG)"
 rm -rf "$SOURCE_DIR"
 mkdir -p "$SOURCE_DIR"
 tar -xzf "$SOURCE_ARCHIVE" -C "$SOURCE_DIR" --strip-components=1
+for patch_file in "$PATCH_DIR"/*.patch; do
+    echo "Applying $(basename "$patch_file")"
+    patch -d "$SOURCE_DIR" -p1 < "$patch_file"
+done
 
 cat > "$BUILD_SCRIPT" <<'SH'
 set -eu
@@ -84,7 +90,7 @@ if [ "${DROPBEAR_VERBOSE:-0}" = "1" ]; then
         -e DROPBEAR_SOURCE_DIR="/workspace/ssh-server/${BUILD_DIR}/third_party/dropbear-${DROPBEAR_VERSION}" \
         -e DROPBEAR_OUTPUT_DIR="/workspace/ssh-server/${BUILD_DIR}/runtime/bin" \
         -e DROPBEAR_VERBOSE=1 \
-        -v "$(dirname "$ROOT_DIR")":/workspace \
+        -v "$ROOT_DIR":/workspace/ssh-server \
         -w /workspace/ssh-server \
         "$TOOLCHAIN_IMAGE" \
         sh "/workspace/ssh-server/${BUILD_DIR}/third_party/dropbear-build.sh" | tee "$BUILD_LOG"
@@ -92,7 +98,7 @@ else
     docker run --rm \
         -e DROPBEAR_SOURCE_DIR="/workspace/ssh-server/${BUILD_DIR}/third_party/dropbear-${DROPBEAR_VERSION}" \
         -e DROPBEAR_OUTPUT_DIR="/workspace/ssh-server/${BUILD_DIR}/runtime/bin" \
-        -v "$(dirname "$ROOT_DIR")":/workspace \
+        -v "$ROOT_DIR":/workspace/ssh-server \
         -w /workspace/ssh-server \
         "$TOOLCHAIN_IMAGE" \
         sh "/workspace/ssh-server/${BUILD_DIR}/third_party/dropbear-build.sh" > "$BUILD_LOG" 2>&1 || {

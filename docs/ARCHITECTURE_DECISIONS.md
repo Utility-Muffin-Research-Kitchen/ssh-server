@@ -32,8 +32,15 @@ The current UX direction is:
 
 ## 5. Runtime model
 
-Version 1 is manual start/stop only. The app should not install a boot-time
-service or autostart behavior in the first milestone.
+The SSH server is a Jawaka SVC-1 foreground service. The GUI uses CTL-1 for
+status, run, stop, and logs; its control client also implements restart,
+enable, and disable for release integration. The app does not keep a PID file
+or install a boot-time hook.
+
+The service requires Jawaka's generation lease on file descriptor 3 and arms
+parent-death protection. The bundled Dropbear patch keeps the daemon,
+connection children, and login shells in the supervisor-owned process group so
+stop escalation and storage lifecycle barriers cover the complete tree.
 
 ## 6. Persistence
 
@@ -43,8 +50,11 @@ App state should live in an app-owned directory under:
 $USERDATA_PATH/umrk-ssh-server/
 ```
 
-This directory should hold config, generated host keys, logs, and any runtime
-state that should survive app relaunches.
+This directory holds config, generated host keys, the optional
+`authorized_keys` input, and the GUI's local log. Jawaka separately owns
+bounded service logs and last-exit state. Passwords are persisted only as
+salted SHA-512 hashes. Legacy plaintext config is accepted solely for atomic
+one-time migration.
 
 ## 7. Default UX contract
 
@@ -53,7 +63,7 @@ The initial defaults are:
 - account name: `sshadmin`
 - port: `2222`
 - starting folder: `/mnt/sdcard`
-- startup mode: manual only
+- startup mode: supervised and disabled by default
 
 ## 8. Current auth direction
 
@@ -80,3 +90,7 @@ The deliverable from this repo should be a Jawaka-launchable pak following the
 platform-guarded `Apps/<platform>/<Name>.pak/` convention, with this repo owning
 the packaged payload layout and launch wrapper. Leaf owns staging the pak into
 the correct platform directory.
+
+The manifest service ID is `org.umrk.sshserver`. Its policy ignores game
+launches, stops on storage change, and is disabled by default. Jawaka persists
+user intent and delays restart until storage is mounted and rescanned.

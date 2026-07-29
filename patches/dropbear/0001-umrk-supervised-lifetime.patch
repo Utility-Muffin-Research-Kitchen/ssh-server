@@ -1,0 +1,68 @@
+--- a/src/dbutil.h
++++ b/src/dbutil.h
+@@ -74,0 +75,3 @@
++int umrk_service_managed(void);
++void umrk_service_arm_child(pid_t expected_parent);
++void umrk_service_rearm_child(void);
+--- a/src/dbutil.c
++++ b/src/dbutil.c
+@@ -85,0 +86,27 @@
++static pid_t umrk_expected_parent = -1;
++
++int umrk_service_managed(void) {
++	const char *lease = getenv("UMRK_SERVICE_LEASE_FD");
++	return lease && strcmp(lease, "3") == 0 && fcntl(3, F_GETFD) >= 0;
++}
++
++void umrk_service_arm_child(pid_t expected_parent) {
++	if (!umrk_service_managed()) {
++		return;
++	}
++	umrk_expected_parent = expected_parent;
++#if defined(__linux__) && defined(PR_SET_PDEATHSIG)
++	if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != expected_parent) {
++		_exit(127);
++	}
++#else
++	(void)expected_parent;
++#endif
++}
++
++void umrk_service_rearm_child(void) {
++	if (umrk_expected_parent > 0) {
++		umrk_service_arm_child(umrk_expected_parent);
++	}
++}
++
+@@ -279,0 +307 @@
++	pid_t expected_parent = getpid();
+@@ -312,0 +341 @@
++		umrk_service_arm_child(expected_parent);
+@@ -409 +438,3 @@
+-		m_close(i);
++		if (i != 3 || !umrk_service_managed()) {
++			m_close(i);
++		}
+--- a/src/svr-main.c
++++ b/src/svr-main.c
+@@ -259,0 +260 @@
++			pid_t expected_parent = getpid();
+@@ -327,0 +329 @@
++				umrk_service_arm_child(expected_parent);
+@@ -334 +336 @@
+-				if (setsid() < 0) {
++				if (!umrk_service_managed() && setsid() < 0) {
+--- a/src/svr-chansession.c
++++ b/src/svr-chansession.c
+@@ -801,0 +802 @@
++	pid_t expected_parent = getpid();
+@@ -827,0 +829 @@
++		umrk_service_arm_child(expected_parent);
+@@ -951,0 +954 @@
++	int preserve_umrk_lease = umrk_service_managed();
+@@ -981,0 +985,3 @@
++	if (preserve_umrk_lease) {
++		addnewvar("UMRK_SERVICE_LEASE_FD", "3");
++	}
+@@ -1007,0 +1014 @@
++	umrk_service_rearm_child();
