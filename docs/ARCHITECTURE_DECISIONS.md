@@ -40,7 +40,13 @@ or install a boot-time hook.
 The service requires Jawaka's generation lease on file descriptor 3 and arms
 parent-death protection. The bundled Dropbear patch keeps the daemon,
 connection children, and login shells in the supervisor-owned process group so
-stop escalation and storage lifecycle barriers cover the complete tree.
+stop escalation and storage lifecycle barriers cover the complete first-party
+tree. Each managed connection process is a Linux child subreaper and retains
+descriptor 3. The login child re-arms parent-death protection after its
+credential change and closes every descriptor from 3 upward before `exec`.
+Before releasing the lease, the connection guardian kills and reaps any escaped
+or double-forked descendants that reparent to it. Interactive programs therefore
+cannot inherit and pin the service generation or outlive the connection.
 
 ## 6. Persistence
 
@@ -54,7 +60,21 @@ This directory holds config, generated host keys, the optional
 `authorized_keys` input, and the GUI's local log. Jawaka separately owns
 bounded service logs and last-exit state. Passwords are persisted only as
 salted SHA-512 hashes. Legacy plaintext config is accepted solely for atomic
-one-time migration.
+one-time migration. New passwords have a 12-character minimum; a weaker legacy
+password is erased and must be reset before password authentication can start.
+
+MLP1 state lives on removable FAT, where requested `0600`/`0700` modes cannot
+provide confidentiality. Mode-change failures that mean "filesystem has no
+Unix mode bits" are tolerated, but config and `authorized_keys` publication is
+still no-follow, same-directory temporary + fsync + rename. Anyone with the
+card can read the password hash or replace authorized keys. This design removes
+plaintext-at-rest and protects against network guessing; physical possession
+of the card remains a credential-compromise boundary.
+
+The UID-0 alias is published idempotently. Matching passwd/shadow rows are a
+no-op; changes use complete, fsynced `/etc/*.umrk.XXXXXX` files and atomic
+per-file renames, with shadow first. A power loss between the two valid renames
+is repaired on the next supervised start without a truncating rollback copy.
 
 ## 7. Default UX contract
 
@@ -93,4 +113,11 @@ the correct platform directory.
 
 The manifest service ID is `org.umrk.sshserver`. Its policy ignores game
 launches, stops on storage change, and is disabled by default. Jawaka persists
-user intent and delays restart until storage is mounted and rescanned.
+user intent and delays restart until storage is mounted and rescanned. The
+3-second stop grace is intentional for interactive sessions; games leave SSH
+running, so concurrent edits to active game data remain a user responsibility.
+
+The manifest revokes `config.ini` and app-state `authorized_keys` on a future
+TXN-1 uninstall and retains host keys/logs. `/etc/passwd` and `/etc/shadow` are
+outside that declarative root. Removing only the package leaves an inert alias
+with no listener; transaction-aware uninstall work must remove it explicitly.

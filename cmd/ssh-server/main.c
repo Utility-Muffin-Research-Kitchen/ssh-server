@@ -168,7 +168,8 @@ static void umrk__refresh_items(umrk_ssh_app *app, cat_options_item *items,
 
     if (umrk_ssh_control_status(&service, control_error, sizeof(control_error)) == 0) {
         running = strcmp(service.effective_state, "running") == 0 ||
-                  strcmp(service.effective_state, "starting") == 0;
+                  strcmp(service.effective_state, "starting") == 0 ||
+                  strcmp(service.effective_state, "stopping") == 0;
         snprintf(display[ROW_SERVER_STATE], PATH_MAX, "%s", service.effective_state);
         if (service.has_last_exit) {
             snprintf(display[ROW_LAST_EXIT], PATH_MAX, "Status %d", service.last_exit_status);
@@ -245,7 +246,7 @@ static void umrk__handle_selected(umrk_ssh_app *app, cat_options_item *items, in
             break;
         case ROW_PASSWORD:
             result = umrk__prompt_text("",
-                                       "Set SSH password.\nSTART saves.\nY cancels.",
+                                       "Set SSH password (12+ chars).\nSTART saves.\nY cancels.",
                                        CAT_KB_GENERAL,
                                        text, sizeof(text), app->status, sizeof(app->status));
             if (result == 0) {
@@ -301,10 +302,13 @@ static void umrk__handle_selected(umrk_ssh_app *app, cat_options_item *items, in
             }
             break;
         case ROW_LOGS: {
+            char control_error[256] = {0};
             if (umrk_ssh_control_logs(app->status, sizeof(app->status),
-                                      app->status, sizeof(app->status)) == 0 &&
+                                      control_error, sizeof(control_error)) == 0 &&
                 !app->status[0]) {
                 snprintf(app->status, sizeof(app->status), "%s", "No service log lines");
+            } else if (control_error[0]) {
+                snprintf(app->status, sizeof(app->status), "%s", control_error);
             }
             umrk__show_status_message(app, "Recent Service Logs");
             break;

@@ -9,7 +9,7 @@
     "schema": 1,
     "id": "org.umrk.sshserver",
     "run": {
-      "path": "bin/ssh-server",
+      "path": "launch.sh",
       "args": ["service", "run"]
     },
     "restart": "on-failure",
@@ -20,5 +20,10 @@
       "stop_on_storage_change": true,
       "stop_on_suspend": false
     }
+  },
+  "state": {
+    "root": "umrk-ssh-server",
+    "revoke_on_uninstall": ["config.ini", "authorized_keys"],
+    "retained_roots": ["hostkeys", "logs"]
   }
 }

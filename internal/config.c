@@ -37,6 +37,14 @@ static const char *umrk__env_value(const char *name) {
     return (value && value[0]) ? value : NULL;
 }
 
+static bool umrk__mode_change_unsupported(int error_number) {
+    return error_number == EPERM || error_number == EOPNOTSUPP
+#if defined(ENOTSUP) && ENOTSUP != EOPNOTSUPP
+        || error_number == ENOTSUP
+#endif
+        ;
+}
+
 static const char *umrk__default_start_dir(void) {
     const char *sdcard = umrk__env_value("SDCARD_PATH");
     if (sdcard) {
@@ -430,15 +438,23 @@ int umrk_ssh_config_save(const umrk_ssh_paths *paths, const umrk_ssh_config *cfg
         return -1;
     }
 
-    if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", paths->config_path) >= (int)sizeof(tmp_path)) {
+    if (snprintf(tmp_path, sizeof(tmp_path), "%s.XXXXXX", paths->config_path) >=
+        (int)sizeof(tmp_path)) {
         umrk__set_error(error, error_len, "%s", "config temp path too long");
         return -1;
     }
 
-    fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
-              0600);
+    fd = mkstemp(tmp_path);
     if (fd < 0) {
         umrk__set_error(error, error_len, "open %s failed: %s", tmp_path, strerror(errno));
+        return -1;
+    }
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+        int saved_errno = errno;
+        close(fd);
+        unlink(tmp_path);
+        umrk__set_error(error, error_len, "protect %s failed: %s",
+                        tmp_path, strerror(saved_errno));
         return -1;
     }
     fp = fdopen(fd, "w");
@@ -469,10 +485,19 @@ int umrk_ssh_config_save(const umrk_ssh_paths *paths, const umrk_ssh_config *cfg
         return -1;
     }
 
-    if (fflush(fp) != 0 || fsync(fileno(fp)) != 0 || fchmod(fileno(fp), 0600) != 0) {
+    if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
         fclose(fp);
         unlink(tmp_path);
         umrk__set_error(error, error_len, "syncing %s failed: %s", tmp_path, strerror(errno));
+        return -1;
+    }
+    if (fchmod(fileno(fp), 0600) != 0 &&
+        !umrk__mode_change_unsupported(errno)) {
+        int saved_errno = errno;
+        fclose(fp);
+        unlink(tmp_path);
+        umrk__set_error(error, error_len, "chmod %s failed: %s",
+                        tmp_path, strerror(saved_errno));
         return -1;
     }
 
@@ -488,21 +513,19 @@ int umrk_ssh_config_save(const umrk_ssh_paths *paths, const umrk_ssh_config *cfg
         return -1;
     }
 
-#if defined(__linux__)
     {
         int state_fd = open(paths->state_root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-        if (state_fd < 0 || syncfs(state_fd) != 0) {
+        if (state_fd < 0 || fsync(state_fd) != 0) {
             int saved_errno = errno;
             if (state_fd >= 0) {
                 close(state_fd);
             }
-            umrk__set_error(error, error_len, "syncfs %s failed: %s",
+            umrk__set_error(error, error_len, "fsync %s failed: %s",
                             paths->state_root, strerror(saved_errno));
             return -1;
         }
         close(state_fd);
     }
-#endif
 
     return 0;
 }

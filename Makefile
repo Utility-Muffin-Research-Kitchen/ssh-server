@@ -95,7 +95,7 @@ run-native: $(APP_BIN)
 
 config-test:
 	@mkdir -p "$(BUILD)"
-	$(CC) $(CSTD) $(CWARN) -g -O0 -I. -Iinternal \
+	$(CC) $(CSTD) $(CWARN) -g -O0 -DUMRK_SSH_ACCOUNT_TEST -I. -Iinternal \
 		-o "$(BUILD)/config-test" internal/config_test.c internal/config.c internal/account.c \
 		$(if $(filter Darwin,$(shell uname -s)),,-lcrypt)
 	"$(BUILD)/config-test"

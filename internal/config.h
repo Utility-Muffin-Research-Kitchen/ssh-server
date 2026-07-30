@@ -14,6 +14,7 @@
 #define UMRK_SSH_DEFAULT_USERNAME "sshadmin"
 #define UMRK_SSH_DEFAULT_BIND "0.0.0.0:2222"
 #define UMRK_SSH_DEFAULT_START_DIR ""
+#define UMRK_SSH_MIN_PASSWORD_LENGTH 12
 
 typedef struct {
     char username[64];

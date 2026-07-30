@@ -21,7 +21,9 @@ Primary target is Miniloong Pocket 1 (MLP1) Stock OS.
   log and last-exit state.
 - The UI shows detected reachable `IP:Port`; only the TCP port is editable.
 - Passwords are converted to salted SHA-512 hashes before persistence. Legacy
-  plaintext config is migrated atomically on first supervised start.
+  plaintext config is migrated atomically on first supervised start. New
+  passwords require at least 12 characters; a weaker legacy password is
+  removed and must be replaced before password login can start.
 - The UI shows authentication mode, the ED25519 host-key fingerprint, last-exit
   status, transition reason, and recent service log lines.
 - Start Folder uses Catastrophe's directory picker.
@@ -29,7 +31,11 @@ Primary target is Miniloong Pocket 1 (MLP1) Stock OS.
   `root` password.
 - The bundled Dropbear is patched so its daemon, connection children, and login
   shells remain in Jawaka's service process group and inherit parent-death
-  protection.
+  protection. Each connection process is also a Linux child subreaper: login
+  shells close every descriptor from 3 upward before `exec`, and the connection
+  guardian kills and reaps escaped or double-forked descendants before it
+  releases the generation lease. Arbitrary shell descendants therefore cannot
+  pin a stale service generation or outlive a supervised connection.
 
 Known limitation: Dropbear's `-w` root-login block rejects every UID 0 account,
 not just the literal `root` username. The current alias-account model preserves
@@ -126,6 +132,20 @@ The service is foreground-only. It has no app-owned PID file, daemon state, or
 persistent `/etc` backup. Jawaka owns service lifetime, stop escalation,
 service logs, and last-exit metadata.
 
+The state root is normally on FAT. FAT has no Unix mode bits, so the persisted
+SHA-512 password hash and `authorized_keys` input are readable to anyone who
+can read the card and remain physically replaceable by someone who controls the
+card. Hashing removes plaintext-at-rest and raises the cost of offline recovery;
+it does not make a removable card a secret store. Prefer a long unique password
+and treat key-only mode as protection against network password guessing, not
+against physical card tampering.
+
+Account publication is idempotent: an already-matching `/etc/passwd` and
+`/etc/shadow` pair is not rewritten on boot/backoff. Changes are built and
+fsynced in same-directory temporary files, renamed atomically one file at a
+time, and deterministically converge on the next start if power fails between
+the two renames.
+
 ## Defaults
 
 | Setting | Default |
@@ -157,6 +177,14 @@ Useful overrides:
   unresolved auth tradeoffs.
 - The service is disabled by default. Jawaka persists explicit enable/disable
   intent and applies lifecycle policy; the app never installs a boot hook.
+- Safe unmount gives interactive shells a 3-second TERM grace before group
+  escalation. Game launches deliberately leave SSH running (`game: ignore`),
+  so an SSH user must not edit a game's active save/state tree during play.
+- The manifest declares `config.ini` and the app-state `authorized_keys` for
+  uninstall revocation while retaining host keys and logs. The rootfs UID-0
+  alias is outside declarative app state; a package-only removal leaves that
+  inert account row in place because no SSH listener remains. A future
+  transaction-aware uninstaller must explicitly remove it.
 - Removal of the legacy launcher-switcher SSH hook and one-time migration of
   existing installations are coordinated Release A assembly work, not owned by
   this repo.

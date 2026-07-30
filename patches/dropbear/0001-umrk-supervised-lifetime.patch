@@ -1,13 +1,27 @@
 --- a/src/dbutil.h
 +++ b/src/dbutil.h
-@@ -74,0 +75,3 @@
+@@ -72,6 +72,11 @@
+ 
+ void m_close(int fd);
+ void setnonblocking(int fd);
 +int umrk_service_managed(void);
 +void umrk_service_arm_child(pid_t expected_parent);
++void umrk_service_arm_guardian(pid_t expected_parent);
 +void umrk_service_rearm_child(void);
++void umrk_service_cleanup_descendants(void);
+ void disallow_core(void);
+ int m_str_to_uint(const char* str, unsigned int *val);
+ /* The same as snprintf() but exits rather than returning negative */
 --- a/src/dbutil.c
 +++ b/src/dbutil.c
-@@ -85,0 +86,27 @@
+@@ -81,7 +81,106 @@
+ 
+ #if DEBUG_TRACE
+ int debug_trace = 0;
++#endif
++
 +static pid_t umrk_expected_parent = -1;
++static int umrk_connection_guardian = 0;
 +
 +int umrk_service_managed(void) {
 +	const char *lease = getenv("UMRK_SERVICE_LEASE_FD");
@@ -15,6 +29,7 @@
 +}
 +
 +void umrk_service_arm_child(pid_t expected_parent) {
++	umrk_connection_guardian = 0;
 +	if (!umrk_service_managed()) {
 +		return;
 +	}
@@ -28,41 +43,163 @@
 +#endif
 +}
 +
-+void umrk_service_rearm_child(void) {
-+	if (umrk_expected_parent > 0) {
-+		umrk_service_arm_child(umrk_expected_parent);
++void umrk_service_arm_guardian(pid_t expected_parent) {
++	if (!umrk_service_managed()) {
++		return;
 +	}
++	umrk_expected_parent = expected_parent;
++#if defined(__linux__) && defined(PR_SET_PDEATHSIG) && defined(PR_SET_CHILD_SUBREAPER)
++	if (prctl(PR_SET_CHILD_SUBREAPER, 1) != 0 ||
++			prctl(PR_SET_PDEATHSIG, SIGTERM) != 0 ||
++			getppid() != expected_parent) {
++		_exit(127);
++	}
++	umrk_connection_guardian = 1;
++#else
++	(void)expected_parent;
++#endif
 +}
 +
-@@ -279,0 +307 @@
-+	pid_t expected_parent = getpid();
-@@ -312,0 +341 @@
-+		umrk_service_arm_child(expected_parent);
-@@ -409 +438,3 @@
--		m_close(i);
-+		if (i != 3 || !umrk_service_managed()) {
-+			m_close(i);
++void umrk_service_rearm_child(void) {
++	if (umrk_expected_parent <= 0 || fcntl(3, F_GETFD) < 0) {
++		return;
++	}
++#if defined(__linux__) && defined(PR_SET_PDEATHSIG)
++	if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 ||
++			getppid() != umrk_expected_parent) {
++		_exit(127);
++	}
++#endif
++}
++
++void umrk_service_cleanup_descendants(void) {
++#if defined(__linux__)
++	int kill_sent = 0;
++	if (!umrk_connection_guardian || !umrk_service_managed()) {
++		return;
++	}
++	for (;;) {
++		char children_path[96];
++		pid_t children[256];
++		size_t count = 0;
++		long raw_pid = 0;
++		int status = 0;
++		FILE *children_file;
++
++		while (waitpid(-1, &status, WNOHANG) > 0) {
++			/* reap children already made absent */
 +		}
++		snprintf(children_path, sizeof(children_path),
++				"/proc/self/task/%ld/children", (long)getpid());
++		children_file = fopen(children_path, "r");
++		if (!children_file) {
++			/* Fail safe: retain descriptor 3 and the guardian process rather
++			 * than release the generation without descendant evidence. */
++			usleep(50000);
++			continue;
++		}
++		while (count < sizeof(children) / sizeof(children[0]) &&
++				fscanf(children_file, "%ld", &raw_pid) == 1) {
++			if (raw_pid > 0 && raw_pid <= INT_MAX) {
++				children[count++] = (pid_t)raw_pid;
++			}
++		}
++		fclose(children_file);
++		if (count == 0) {
++			break;
++		}
++		for (size_t i = 0; i < count; i++) {
++			(void)kill(children[i], kill_sent ? SIGKILL : SIGTERM);
++		}
++		kill_sent = 1;
++		usleep(50000);
++	}
++	unsetenv("UMRK_SERVICE_LEASE_FD");
++	m_close(3);
+ #endif
++}
+ 
+ #ifndef DISABLE_SYSLOG
+ void startsyslog(const char *ident) {
+@@ -277,6 +375,7 @@
+ 	int outfds[2];
+ 	int errfds[2];
+ 	pid_t pid;
++	pid_t expected_parent = getpid();
+ 
+ 	const int FDIN = 0;
+ 	const int FDOUT = 1;
+@@ -310,6 +409,7 @@
+ 
+ 	if (!pid) {
+ 		/* child */
++		umrk_service_arm_child(expected_parent);
+ 
+ 		TRACE(("back to normal sigchld"))
+ 		/* Revert to normal sigchld handling */
 --- a/src/svr-main.c
 +++ b/src/svr-main.c
-@@ -259,0 +260 @@
+@@ -257,6 +257,7 @@
+ 			size_t num_unauthed_total = 0;
+ 			char *remote_host = NULL, *remote_port = NULL;
+ 			pid_t fork_ret = 0;
 +			pid_t expected_parent = getpid();
-@@ -327,0 +329 @@
-+				umrk_service_arm_child(expected_parent);
-@@ -334 +336 @@
+ 			size_t conn_idx = 0;
+ 			struct sockaddr_storage remoteaddr;
+ 			socklen_t remoteaddrlen;
+@@ -325,13 +326,14 @@
+ 			} else {
+ 
+ 				/* child */
++				umrk_service_arm_guardian(expected_parent);
+ 				getaddrstring(&remoteaddr, NULL, &remote_port, 0);
+ 				dropbear_log(LOG_INFO, "Child connection from %s:%s", remote_host, remote_port);
+ 				m_free(remote_host);
+ 				m_free(remote_port);
+ 
+ #if !DEBUG_NOFORK
 -				if (setsid() < 0) {
 +				if (!umrk_service_managed() && setsid() < 0) {
+ 					dropbear_exit("setsid: %s", strerror(errno));
+ 				}
+ #endif
 --- a/src/svr-chansession.c
 +++ b/src/svr-chansession.c
-@@ -801,0 +802 @@
+@@ -799,6 +799,7 @@
+ static int ptycommand(struct Channel *channel, struct ChanSess *chansess) {
+ 
+ 	pid_t pid;
 +	pid_t expected_parent = getpid();
-@@ -827,0 +829 @@
+ 	struct logininfo *li = NULL;
+ #if DO_MOTD
+ 	buffer * motdbuf = NULL;
+@@ -825,6 +826,7 @@
+ 
+ 	if (pid == 0) {
+ 		/* child */
 +		umrk_service_arm_child(expected_parent);
-@@ -951,0 +954 @@
-+	int preserve_umrk_lease = umrk_service_managed();
-@@ -981,0 +985,3 @@
-+	if (preserve_umrk_lease) {
-+		addnewvar("UMRK_SERVICE_LEASE_FD", "3");
-+	}
-@@ -1007,0 +1014 @@
+ 		
+ 		TRACE(("back to normal sigchld"))
+ 		/* Revert to normal sigchld handling */
+@@ -1005,6 +1007,7 @@
+ 		}
+ 	}
+ #endif
 +	umrk_service_rearm_child();
+ 
+ 	/* set env vars */
+ 	addnewvar("USER", ses.authstate.pw_name);
+--- a/src/svr-session.c
++++ b/src/svr-session.c
+@@ -218,6 +218,11 @@
+ 	char fromaddr[60];
+ 	int i;
+ 	int add_delay = 0;
++
++	/* A managed connection process is a subreaper/lease guardian. It may
++	 * release descriptor 3 only after every login descendant, including a
++	 * double-forked or setsid process reparented to it, is proven absent. */
++	umrk_service_cleanup_descendants();
+ 
+ #if DROPBEAR_PLUGIN
+ 	if ((ses.plugin_session != NULL)) {

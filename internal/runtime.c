@@ -431,6 +431,9 @@ int umrk_ssh_service_run(umrk_ssh_config *cfg, const umrk_ssh_paths *paths,
     }
 #endif
 
+    fprintf(stderr, "ssh-server service: app_root=%s state_root=%s start_dir=%s\n",
+            paths->app_root, paths->state_root, cfg->start_dir);
+
     if (umrk_ssh_migrate_legacy_password(paths, cfg, status, status_len) != 0 ||
         umrk_ssh_apply_account(cfg, paths, status, status_len) != 0) {
         return -1;
