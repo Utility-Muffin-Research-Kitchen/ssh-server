@@ -5,6 +5,7 @@
 
 #include "internal/account.h"
 #include "internal/config.h"
+#include "internal/control.h"
 #include "internal/runtime.h"
 
 #include <stdbool.h>
@@ -18,7 +19,11 @@ enum {
     ROW_BIND_ADDRESS,
     ROW_USERNAME,
     ROW_PASSWORD,
+    ROW_AUTH_MODE,
+    ROW_HOST_KEY,
+    ROW_LAST_EXIT,
     ROW_START_DIR,
+    ROW_LOGS,
     ROW_COUNT
 };
 
@@ -59,22 +64,6 @@ static const char *umrk__desktop_font_path(const umrk_ssh_paths *paths) {
         return candidate;
     }
     return NULL;
-}
-
-static void umrk__password_mask(const char *password, char *out, size_t out_len) {
-    size_t len;
-
-    if (!password || password[0] == '\0') {
-        snprintf(out, out_len, "%s", "(unset)");
-        return;
-    }
-
-    len = strlen(password);
-    if (len > out_len - 1) {
-        len = out_len - 1;
-    }
-    memset(out, '*', len);
-    out[len] = '\0';
 }
 
 static int umrk__copy_checked(char *dst, size_t dst_len, const char *src,
@@ -173,42 +162,45 @@ static int umrk__save_config(umrk_ssh_app *app) {
 
 static void umrk__refresh_items(umrk_ssh_app *app, cat_options_item *items,
                                 cat_option values[][1], char display[][PATH_MAX]) {
-    int pid = 0;
-    char password[128];
+    umrk_ssh_service_status service;
+    char control_error[128];
+    bool running = false;
 
-    if (umrk_ssh_server_is_running(&app->paths, &pid)) {
-        snprintf(display[ROW_SERVER_STATE], PATH_MAX, "%s", "On");
+    if (umrk_ssh_control_status(&service, control_error, sizeof(control_error)) == 0) {
+        running = strcmp(service.effective_state, "running") == 0 ||
+                  strcmp(service.effective_state, "starting") == 0 ||
+                  strcmp(service.effective_state, "stopping") == 0;
+        snprintf(display[ROW_SERVER_STATE], PATH_MAX, "%s", service.effective_state);
+        if (service.has_last_exit) {
+            snprintf(display[ROW_LAST_EXIT], PATH_MAX, "Status %d", service.last_exit_status);
+        } else {
+            snprintf(display[ROW_LAST_EXIT], PATH_MAX, "%s", "None");
+        }
     } else {
-        snprintf(display[ROW_SERVER_STATE], PATH_MAX, "%s", "Off");
+        snprintf(display[ROW_SERVER_STATE], PATH_MAX, "%s", "Unavailable");
+        snprintf(display[ROW_LAST_EXIT], PATH_MAX, "%s", "Unavailable");
     }
-    items[ROW_SERVER_STATE].selected_option = pid > 0 ? 1 : 0;
+    items[ROW_SERVER_STATE].selected_option = running ? 1 : 0;
     if (umrk_ssh_format_reachable_address(&app->config, display[ROW_BIND_ADDRESS], PATH_MAX) != 0 &&
         display[ROW_BIND_ADDRESS][0] == '\0') {
         snprintf(display[ROW_BIND_ADDRESS], PATH_MAX, "%s", "Offline");
     }
     snprintf(display[ROW_USERNAME], PATH_MAX, "%s", app->config.username[0] ? app->config.username : "(unset)");
-    umrk__password_mask(app->config.password, password, sizeof(password));
-    snprintf(display[ROW_PASSWORD], PATH_MAX, "%s", password);
+    snprintf(display[ROW_PASSWORD], PATH_MAX, "%s",
+             app->config.password_configured ? "Configured" : "(unset)");
+    snprintf(display[ROW_AUTH_MODE], PATH_MAX, "%s",
+             app->config.password_auth_enabled ? "Password + Keys" : "Keys Only");
+    if (umrk_ssh_hostkey_fingerprint(&app->paths, display[ROW_HOST_KEY], PATH_MAX) != 0) {
+        snprintf(display[ROW_HOST_KEY], PATH_MAX, "%s", "Not generated");
+    }
     snprintf(display[ROW_START_DIR], PATH_MAX, "%s", app->config.start_dir[0] ? app->config.start_dir : "(unset)");
+    snprintf(display[ROW_LOGS], PATH_MAX, "%s", "View recent");
 
     for (int i = 1; i < ROW_COUNT; ++i) {
         values[i][0].label = display[i];
         values[i][0].value = display[i];
         items[i].options = values[i];
     }
-}
-
-static int umrk__apply_account(umrk_ssh_app *app) {
-    if (umrk_ssh_apply_account(&app->config, &app->paths, app->status, sizeof(app->status)) != 0) {
-        return -1;
-    }
-    snprintf(app->config.last_applied_username, sizeof(app->config.last_applied_username), "%s",
-             app->config.username);
-    if (umrk_ssh_config_save(&app->paths, &app->config, app->status, sizeof(app->status)) != 0) {
-        return -1;
-    }
-    snprintf(app->status, sizeof(app->status), "Applied account %s and saved config", app->config.username);
-    return 0;
 }
 
 static int umrk__apply_field_change(umrk_ssh_app *app, const char *success_message) {
@@ -253,23 +245,74 @@ static void umrk__handle_selected(umrk_ssh_app *app, cat_options_item *items, in
             }
             break;
         case ROW_PASSWORD:
-            result = umrk__prompt_text(app->config.password,
-                                       "Set SSH password.\nSTART saves.\nY cancels.",
+            result = umrk__prompt_text("",
+                                       "Set SSH password (12+ chars).\nSTART saves.\nY cancels.",
                                        CAT_KB_GENERAL,
                                        text, sizeof(text), app->status, sizeof(app->status));
             if (result == 0) {
-                if (umrk__copy_checked(app->config.password, sizeof(app->config.password), text,
-                                       app->status, sizeof(app->status), "Password") == 0) {
-                    umrk__apply_field_change(app, "Saved password");
+                if (umrk_ssh_configure_password(&app->config, text,
+                                                app->status, sizeof(app->status)) == 0) {
+                    memset(text, 0, sizeof(text));
+                    umrk__apply_field_change(app, "Saved password hash; restart SSH to apply");
+                } else {
+                    memset(text, 0, sizeof(text));
+                    umrk__show_status_message(app, "Invalid Password");
                 }
             }
             break;
+        case ROW_AUTH_MODE:
+            app->config.password_auth_enabled = !app->config.password_auth_enabled;
+            if (umrk__save_config(app) == 0) {
+                snprintf(app->status, sizeof(app->status), "%s",
+                         app->config.password_auth_enabled
+                             ? "Password and key authentication enabled; restart SSH to apply"
+                             : "Key-only mode selected; authorized_keys is required before restart");
+            }
+            break;
+        case ROW_HOST_KEY:
+            {
+                char fingerprint[128];
+                if (umrk_ssh_hostkey_fingerprint(&app->paths, fingerprint, sizeof(fingerprint)) == 0) {
+                    snprintf(app->status, sizeof(app->status), "ED25519 %.120s", fingerprint);
+                } else {
+                    snprintf(app->status, sizeof(app->status), "%s", "Host key has not been generated yet");
+                }
+            }
+            umrk__show_status_message(app, "Host Key Fingerprint");
+            break;
+        case ROW_LAST_EXIT: {
+            umrk_ssh_service_status service;
+            if (umrk_ssh_control_status(&service, app->status, sizeof(app->status)) == 0) {
+                if (service.has_last_exit) {
+                    snprintf(app->status, sizeof(app->status), "Exit status %d; transition: %s",
+                             service.last_exit_status,
+                             service.last_transition_reason[0] ? service.last_transition_reason : "none");
+                } else {
+                    snprintf(app->status, sizeof(app->status), "No recorded service exit; transition: %s",
+                             service.last_transition_reason[0] ? service.last_transition_reason : "none");
+                }
+            }
+            umrk__show_status_message(app, "Supervisor Status");
+            break;
+        }
         case ROW_START_DIR:
             result = umrk__pick_start_dir(app);
             if (result == -1) {
                 umrk__show_status_message(app, "Folder Picker Failed");
             }
             break;
+        case ROW_LOGS: {
+            char control_error[256] = {0};
+            if (umrk_ssh_control_logs(app->status, sizeof(app->status),
+                                      control_error, sizeof(control_error)) == 0 &&
+                !app->status[0]) {
+                snprintf(app->status, sizeof(app->status), "%s", "No service log lines");
+            } else if (control_error[0]) {
+                snprintf(app->status, sizeof(app->status), "%s", control_error);
+            }
+            umrk__show_status_message(app, "Recent Service Logs");
+            break;
+        }
         default:
             break;
     }
@@ -284,16 +327,18 @@ static void umrk__handle_option_changed(umrk_ssh_app *app, cat_options_item *ite
 
     enable_requested = items[ROW_SERVER_STATE].selected_option == 1;
     if (enable_requested) {
-        if (umrk__apply_account(app) == 0 &&
-            umrk_ssh_server_start(&app->config, &app->paths, app->status, sizeof(app->status)) == 0) {
+        if (umrk_ssh_control_request("run", app->status, sizeof(app->status)) == 0) {
+            snprintf(app->status, sizeof(app->status), "%s", "Starting SSH under Jawaka supervision");
             return;
         }
         umrk__show_status_message(app, "Could Not Start Server");
         return;
     }
 
-    if (umrk_ssh_server_stop(&app->paths, app->status, sizeof(app->status)) != 0) {
+    if (umrk_ssh_control_request("stop", app->status, sizeof(app->status)) != 0) {
         umrk__show_status_message(app, "Could Not Stop Server");
+    } else {
+        snprintf(app->status, sizeof(app->status), "%s", "Stopping supervised SSH service");
     }
 }
 
@@ -308,7 +353,11 @@ static int umrk__run_app(umrk_ssh_app *app) {
         { .label = "IP:Port",        .type = CAT_OPT_CLICKABLE, .option_count = 1, .selected_option = 0 },
         { .label = "Username",       .type = CAT_OPT_CLICKABLE, .option_count = 1, .selected_option = 0 },
         { .label = "Password",       .type = CAT_OPT_CLICKABLE, .option_count = 1, .selected_option = 0 },
+        { .label = "Authentication", .type = CAT_OPT_CLICKABLE, .option_count = 1, .selected_option = 0 },
+        { .label = "Host Key",       .type = CAT_OPT_CLICKABLE, .option_count = 1, .selected_option = 0 },
+        { .label = "Last Exit",      .type = CAT_OPT_CLICKABLE, .option_count = 1, .selected_option = 0 },
         { .label = "Start Folder",   .type = CAT_OPT_CLICKABLE, .option_count = 1, .selected_option = 0 },
+        { .label = "Logs",           .type = CAT_OPT_CLICKABLE, .option_count = 1, .selected_option = 0 },
     };
     char display[ROW_COUNT][PATH_MAX];
     cat_footer_item footer[] = {
@@ -369,7 +418,7 @@ static int umrk__run_app(umrk_ssh_app *app) {
     return 0;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     umrk_ssh_app app;
     cat_config cfg = {0};
     const char *font_path;
@@ -389,6 +438,24 @@ int main(void) {
     }
 
     if (umrk_ssh_config_load(&app.paths, &app.config, app.status, sizeof(app.status)) != 0) {
+        fprintf(stderr, "%s\n", app.status);
+        return 1;
+    }
+
+    if (argc == 3 && strcmp(argv[1], "service") == 0 && strcmp(argv[2], "run") == 0) {
+        if (umrk_ssh_service_run(&app.config, &app.paths,
+                                 app.status, sizeof(app.status)) != 0) {
+            fprintf(stderr, "%s\n", app.status);
+            return 1;
+        }
+        return 0;
+    }
+    if (argc != 1) {
+        fprintf(stderr, "usage: %s [service run]\n", argv[0]);
+        return 2;
+    }
+    if (umrk_ssh_migrate_legacy_password(&app.paths, &app.config,
+                                         app.status, sizeof(app.status)) != 0) {
         fprintf(stderr, "%s\n", app.status);
         return 1;
     }

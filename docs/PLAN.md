@@ -38,7 +38,7 @@ the highest-risk part of the plan.
 - port: `2222`
 - starting folder: `/mnt/sdcard`
 - config root: `$USERDATA_PATH/umrk-ssh-server/`
-- startup mode: manual only
+- startup mode: Jawaka-supervised and disabled by default
 
 ## 4. Proposed persisted state
 
@@ -46,8 +46,8 @@ the highest-risk part of the plan.
 $USERDATA_PATH/umrk-ssh-server/
   config.ini
   hostkeys/
-  logs/
-  run/
+  authorized_keys
+  logs/ssh-server.txt
 ```
 
 Expected config fields:
@@ -57,10 +57,12 @@ Expected config fields:
  plus the configured port)
 - `start_dir`
 - `last_applied_username`
+- `password_hash`
+- `password_configured`
+- `password_auth_enabled`
 
-The password itself should only be persisted if the final account-management
-approach truly requires it. Prefer writing the system account password and not
-storing the raw secret long-term if the device flow allows that cleanly.
+Passwords are persisted only as salted SHA-512 hashes. A legacy plaintext
+`password` field is read only for atomic migration and is never written back.
 
 ## 5. Milestones
 
@@ -92,7 +94,7 @@ Current outcome:
 
 ### Phase 1 - backend bring-up
 
-Status: **started**
+Status: **completed for Release A candidate**
 
 Bring a Dropbear build into this repo and define the runtime bundle layout.
 
@@ -100,22 +102,25 @@ Tasks:
 
 1. Add the chosen build inputs for Miniloong Pocket 1.
 2. Produce Dropbear and host-key generation binaries needed by the app.
-3. Define launch arguments, pidfile path, log path, and host-key path.
-4. Verify manual start/stop from an app-owned wrapper script.
+3. Define foreground launch arguments and host-key paths; delegate lifetime and
+   logs to Jawaka.
+4. Verify CTL-1 run/stop and supervisor escalation of the full process group.
 
 Exit condition:
 
-- Dropbear can be started and stopped on-device from a controlled wrapper
+- Dropbear can be run and stopped on-device through Jawaka supervision
 
 Current outcome:
 
 - `build/mlp1/runtime/bin/` is now populated by a pinned Dropbear 2025.88 build
 - `SSHServer.pak` now bundles `dropbear` and `dropbearkey`
-- direct on-device smoke confirmed host-key generation and daemon startup work
+- the pak declares SVC-1 service `org.umrk.sshserver`
+- on-device qualification confirmed host-key generation, foreground service
+  startup, CTL stop, forced-supervisor-death cleanup, and storage-removal stops
 
 ### Phase 2 - Catastrophe app shell
 
-Status: **started**
+Status: **completed for Release A candidate**
 
 Build the first real GUI.
 
@@ -145,10 +150,12 @@ Current outcome:
 - username/password keyboard prompts now explain `START = save` and
   `Y = cancel`
 - Start Folder selection now uses Catastrophe's directory picker
+- service status, auth mode, host-key fingerprint, last exit, transition reason,
+  and recent Jawaka log lines are visible in the UI
 
 ### Phase 3 - account management
 
-Status: **started**
+Status: **completed for Release A candidate**
 
 Wire the chosen auth model into the GUI flow.
 
@@ -163,7 +170,17 @@ Exit condition:
 
 - the app-owned account can authenticate successfully over SSH
 
+Current outcome:
+
+- a dedicated UID 0 alias is applied without changing stock `root`
+- the password is stored as a salted SHA-512 hash, never plaintext
+- legacy plaintext config migrates atomically
+- password and key-only authentication modes are supported; key-only mode uses
+  the app-state `authorized_keys` file
+
 ### Phase 4 - Jawaka packaging
+
+Status: **completed for Release A candidate**
 
 Turn the app into a launchable Jawaka pak.
 
@@ -178,32 +195,39 @@ Exit condition:
 
 - the app is launchable through the normal Jawaka `Apps/` flow
 
+Current outcome:
+
+- `SSHServer.pak` includes the SVC-1 manifest, GUI/control client, service
+  runtime, patched Dropbear, Dropbearkey, and resources
+- Leaf's existing app dispatcher builds and stages the package
+
 ### Phase 5 - hardening
+
+Status: **Release A qualification complete; coordinated assembly pending**
 
 Reduce surprises before real usage.
 
 Tasks:
 
 1. Improve validation and error messaging.
-2. Add safe defaults for bind address, log handling, and stale pid cleanup.
+2. Add safe defaults for bind address and supervised log handling.
 3. Document uninstall and account cleanup behavior.
 4. Decide whether SFTP/SCP support is explicitly in or out for v1.
 
 ## 6. Open technical questions
 
-1. What is the cleanest root-equivalent account model on this firmware?
-2. Should the account name stay fully editable, or should the first version
+1. Should the account name stay fully editable, or should the first version
    keep `sshadmin` fixed?
-3. Does the chosen start-directory behavior need shell wrapping to guarantee the
+2. Does the chosen start-directory behavior need shell wrapping to guarantee the
    initial working directory for login sessions?
-4. Is SFTP required in v1, or is shell-only SSH sufficient for the first slice?
-5. If disabling stock `root` login is mandatory, should the repo pivot to a
+3. Is SFTP required in v1, or is shell-only SSH sufficient for the first slice?
+4. If disabling stock `root` login is mandatory, should the repo pivot to a
    non-UID-0 account plus a privileged helper instead of the alias-account
    model?
 
 ## 7. Non-goals for v1
 
-- boot-time autostart
+- app-installed boot hooks (Jawaka owns persisted service intent)
 - remote package management
 - sharing Jawaka's SQLite DB for app settings
 - replacing Dropbear with a custom SSH daemon unless the auth spike forces it

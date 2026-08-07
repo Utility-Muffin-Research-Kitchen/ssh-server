@@ -72,4 +72,4 @@ fi
 export PLATFORM
 export UMRK_SSH_APP_ROOT="$APP_DIR"
 
-exec "$APP_DIR/bin/ssh-server"
+exec "$APP_DIR/bin/ssh-server" "$@"

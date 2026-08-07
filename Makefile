@@ -52,6 +52,7 @@ APP_SRCS := \
 	cmd/ssh-server/main.c \
 	internal/config.c \
 	internal/account.c \
+	internal/control.c \
 	internal/runtime.c \
 	$(CJSON_SRC)
 APP_HDRS := $(wildcard internal/*.h)
@@ -64,7 +65,7 @@ PACKAGE_DIR := $(PACKAGE_ROOT)/SSHServer.pak
 MLP1_BUILD ?= build/mlp1
 MLP1_APP_BIN := $(MLP1_BUILD)/bin/ssh-server
 
-.PHONY: all native run-native package package-build package-platform package-mlp1 mlp adb-stage-pak adb-stage-pak-mlp1 clean check-catastrophe check-sdl
+.PHONY: all native run-native config-test package package-build package-platform package-mlp1 mlp adb-stage-pak adb-stage-pak-mlp1 clean check-catastrophe check-sdl
 
 all: native
 
@@ -92,6 +93,13 @@ run-native: $(APP_BIN)
 	UMRK_SSH_DESKTOP_FONT="$(CATASTROPHE_RES)/font.ttf" \
 	"$(APP_BIN)"
 
+config-test:
+	@mkdir -p "$(BUILD)"
+	$(CC) $(CSTD) $(CWARN) -g -O0 -DUMRK_SSH_ACCOUNT_TEST -I. -Iinternal \
+		-o "$(BUILD)/config-test" internal/config_test.c internal/config.c internal/account.c \
+		$(if $(filter Darwin,$(shell uname -s)),,-lcrypt)
+	"$(BUILD)/config-test"
+
 package: $(APP_BIN)
 	@$(MAKE) BUILD="$(BUILD)" PLATFORM="$(PLATFORM)" package-build
 
@@ -100,7 +108,7 @@ package-build:
 	@mkdir -p "$(PACKAGE_DIR)/bin" "$(PACKAGE_DIR)/res" "$(PACKAGE_DIR)/runtime/bin"
 	@cp -f "$(APP_BIN)" "$(PACKAGE_DIR)/bin/ssh-server"
 	@cp -f "pak/launch.sh" "$(PACKAGE_DIR)/launch.sh"
-	@printf '{ "name": "SSH Server", "icon": "res/icon.png", "platform": "$(PLATFORM)", "pak_version": "0.1.0", "min_jawaka_version": "0.0.1" }\n' > "$(PACKAGE_DIR)/pak.json"
+	@cp -f "pak/pak.json" "$(PACKAGE_DIR)/pak.json"
 	@if [ "$(PLATFORM)" = "mlp1" ]; then \
 		{ \
 			printf '{\n'; \

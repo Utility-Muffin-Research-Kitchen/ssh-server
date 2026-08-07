@@ -1,7 +1,9 @@
+#define _GNU_SOURCE
 #include "config.h"
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -33,6 +35,14 @@ static int umrk__path_join(char *out, size_t out_len, const char *base, const ch
 static const char *umrk__env_value(const char *name) {
     const char *value = getenv(name);
     return (value && value[0]) ? value : NULL;
+}
+
+static bool umrk__mode_change_unsupported(int error_number) {
+    return error_number == EPERM || error_number == EOPNOTSUPP
+#if defined(ENOTSUP) && ENOTSUP != EOPNOTSUPP
+        || error_number == ENOTSUP
+#endif
+        ;
 }
 
 static const char *umrk__default_start_dir(void) {
@@ -243,6 +253,7 @@ void umrk_ssh_config_set_defaults(umrk_ssh_config *cfg) {
     snprintf(cfg->username, sizeof(cfg->username), "%s", UMRK_SSH_DEFAULT_USERNAME);
     snprintf(cfg->bind_address, sizeof(cfg->bind_address), "%s", UMRK_SSH_DEFAULT_BIND);
     snprintf(cfg->start_dir, sizeof(cfg->start_dir), "%s", umrk__default_start_dir());
+    cfg->password_auth_enabled = true;
 }
 
 int umrk_ssh_paths_init(umrk_ssh_paths *paths, char *error, size_t error_len) {
@@ -261,9 +272,32 @@ int umrk_ssh_paths_init(umrk_ssh_paths *paths, char *error, size_t error_len) {
             umrk__set_error(error, error_len, "%s", "app root path too long");
             return -1;
         }
+#ifdef PLATFORM_MLP1
+    } else {
+        ssize_t length = readlink("/proc/self/exe", paths->app_root,
+                                  sizeof(paths->app_root) - 1u);
+        if (length <= 0 || (size_t)length >= sizeof(paths->app_root)) {
+            umrk__set_error(error, error_len, "readlink /proc/self/exe failed: %s", strerror(errno));
+            return -1;
+        }
+        paths->app_root[(size_t)length] = '\0';
+        char *slash = strrchr(paths->app_root, '/');
+        if (!slash || strcmp(slash, "/ssh-server") != 0) {
+            umrk__set_error(error, error_len, "%s", "service executable path is invalid");
+            return -1;
+        }
+        *slash = '\0';
+        slash = strrchr(paths->app_root, '/');
+        if (!slash || strcmp(slash, "/bin") != 0) {
+            umrk__set_error(error, error_len, "%s", "service executable is not inside a pak bin directory");
+            return -1;
+        }
+        *slash = '\0';
+#else
     } else if (!getcwd(paths->app_root, sizeof(paths->app_root))) {
         umrk__set_error(error, error_len, "getcwd failed: %s", strerror(errno));
         return -1;
+#endif
     }
 
     if (state_root && state_root[0]) {
@@ -305,12 +339,11 @@ int umrk_ssh_paths_init(umrk_ssh_paths *paths, char *error, size_t error_len) {
 
     if (umrk__path_join(paths->config_path, sizeof(paths->config_path), paths->state_root, "config.ini") != 0 ||
         umrk__path_join(paths->hostkeys_dir, sizeof(paths->hostkeys_dir), paths->state_root, "hostkeys") != 0 ||
-        umrk__path_join(paths->run_dir, sizeof(paths->run_dir), paths->state_root, "run") != 0 ||
         umrk__path_join(paths->log_dir, sizeof(paths->log_dir), paths->state_root, "logs") != 0 ||
         umrk__path_join(paths->app_log_path, sizeof(paths->app_log_path), paths->log_dir, "ssh-server.txt") != 0 ||
-        umrk__path_join(paths->backups_dir, sizeof(paths->backups_dir), paths->state_root, "backups") != 0 ||
         umrk__path_join(paths->bundled_dropbear, sizeof(paths->bundled_dropbear), paths->app_root, "runtime/bin/dropbear") != 0 ||
-        umrk__path_join(paths->bundled_dropbearkey, sizeof(paths->bundled_dropbearkey), paths->app_root, "runtime/bin/dropbearkey") != 0) {
+        umrk__path_join(paths->bundled_dropbearkey, sizeof(paths->bundled_dropbearkey), paths->app_root, "runtime/bin/dropbearkey") != 0 ||
+        umrk__path_join(paths->authorized_keys_path, sizeof(paths->authorized_keys_path), paths->state_root, "authorized_keys") != 0) {
         umrk__set_error(error, error_len, "%s", "derived path too long");
         return -1;
     }
@@ -365,7 +398,13 @@ int umrk_ssh_config_load(const umrk_ssh_paths *paths, umrk_ssh_config *cfg,
         if (strcmp(key, "username") == 0) {
             snprintf(cfg->username, sizeof(cfg->username), "%s", value);
         } else if (strcmp(key, "password") == 0) {
-            snprintf(cfg->password, sizeof(cfg->password), "%s", value);
+            snprintf(cfg->legacy_password, sizeof(cfg->legacy_password), "%s", value);
+        } else if (strcmp(key, "password_hash") == 0) {
+            snprintf(cfg->password_hash, sizeof(cfg->password_hash), "%s", value);
+        } else if (strcmp(key, "password_configured") == 0) {
+            cfg->password_configured = strcmp(value, "true") == 0 || strcmp(value, "1") == 0;
+        } else if (strcmp(key, "password_auth_enabled") == 0) {
+            cfg->password_auth_enabled = strcmp(value, "true") == 0 || strcmp(value, "1") == 0;
         } else if (strcmp(key, "bind_address") == 0) {
             snprintf(cfg->bind_address, sizeof(cfg->bind_address), "%s", value);
         } else if (strcmp(key, "port") == 0) {
@@ -386,6 +425,7 @@ int umrk_ssh_config_load(const umrk_ssh_paths *paths, umrk_ssh_config *cfg,
 int umrk_ssh_config_save(const umrk_ssh_paths *paths, const umrk_ssh_config *cfg,
                          char *error, size_t error_len) {
     FILE *fp;
+    int fd;
     char escaped[PATH_MAX * 2];
     char tmp_path[PATH_MAX];
 
@@ -398,21 +438,41 @@ int umrk_ssh_config_save(const umrk_ssh_paths *paths, const umrk_ssh_config *cfg
         return -1;
     }
 
-    if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", paths->config_path) >= (int)sizeof(tmp_path)) {
+    if (snprintf(tmp_path, sizeof(tmp_path), "%s.XXXXXX", paths->config_path) >=
+        (int)sizeof(tmp_path)) {
         umrk__set_error(error, error_len, "%s", "config temp path too long");
         return -1;
     }
 
-    fp = fopen(tmp_path, "w");
-    if (!fp) {
+    fd = mkstemp(tmp_path);
+    if (fd < 0) {
         umrk__set_error(error, error_len, "open %s failed: %s", tmp_path, strerror(errno));
+        return -1;
+    }
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+        int saved_errno = errno;
+        close(fd);
+        unlink(tmp_path);
+        umrk__set_error(error, error_len, "protect %s failed: %s",
+                        tmp_path, strerror(saved_errno));
+        return -1;
+    }
+    fp = fdopen(fd, "w");
+    if (!fp) {
+        int saved_errno = errno;
+        close(fd);
+        unlink(tmp_path);
+        umrk__set_error(error, error_len, "fdopen %s failed: %s",
+                        tmp_path, strerror(saved_errno));
         return -1;
     }
 
     if (umrk__escape_value(cfg->username, escaped, sizeof(escaped)) != 0 ||
         fprintf(fp, "username=%s\n", escaped) < 0 ||
-        umrk__escape_value(cfg->password, escaped, sizeof(escaped)) != 0 ||
-        fprintf(fp, "password=%s\n", escaped) < 0 ||
+        umrk__escape_value(cfg->password_hash, escaped, sizeof(escaped)) != 0 ||
+        fprintf(fp, "password_hash=%s\n", escaped) < 0 ||
+        fprintf(fp, "password_configured=%s\n", cfg->password_configured ? "true" : "false") < 0 ||
+        fprintf(fp, "password_auth_enabled=%s\n", cfg->password_auth_enabled ? "true" : "false") < 0 ||
         umrk__escape_value(cfg->bind_address, escaped, sizeof(escaped)) != 0 ||
         fprintf(fp, "bind_address=%s\n", escaped) < 0 ||
         umrk__escape_value(cfg->start_dir, escaped, sizeof(escaped)) != 0 ||
@@ -422,6 +482,22 @@ int umrk_ssh_config_save(const umrk_ssh_paths *paths, const umrk_ssh_config *cfg
         fclose(fp);
         unlink(tmp_path);
         umrk__set_error(error, error_len, "%s", "writing config failed");
+        return -1;
+    }
+
+    if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
+        fclose(fp);
+        unlink(tmp_path);
+        umrk__set_error(error, error_len, "syncing %s failed: %s", tmp_path, strerror(errno));
+        return -1;
+    }
+    if (fchmod(fileno(fp), 0600) != 0 &&
+        !umrk__mode_change_unsupported(errno)) {
+        int saved_errno = errno;
+        fclose(fp);
+        unlink(tmp_path);
+        umrk__set_error(error, error_len, "chmod %s failed: %s",
+                        tmp_path, strerror(saved_errno));
         return -1;
     }
 
@@ -435,6 +511,20 @@ int umrk_ssh_config_save(const umrk_ssh_paths *paths, const umrk_ssh_config *cfg
         unlink(tmp_path);
         umrk__set_error(error, error_len, "rename %s -> %s failed: %s", tmp_path, paths->config_path, strerror(errno));
         return -1;
+    }
+
+    {
+        int state_fd = open(paths->state_root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (state_fd < 0 || fsync(state_fd) != 0) {
+            int saved_errno = errno;
+            if (state_fd >= 0) {
+                close(state_fd);
+            }
+            umrk__set_error(error, error_len, "fsync %s failed: %s",
+                            paths->state_root, strerror(saved_errno));
+            return -1;
+        }
+        close(state_fd);
     }
 
     return 0;

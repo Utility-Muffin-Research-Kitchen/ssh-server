@@ -13,8 +13,14 @@ RUNTIME_BIN_DIR="$ROOT_DIR/$BUILD_DIR/runtime/bin"
 BUILD_SCRIPT="$ROOT_DIR/$BUILD_DIR/third_party/dropbear-build.sh"
 BUILD_LOG="$ROOT_DIR/$BUILD_DIR/third_party/dropbear-build.log"
 STAMP="$RUNTIME_BIN_DIR/.dropbear-${DROPBEAR_VERSION}.stamp"
+PATCH_DIR="$ROOT_DIR/patches/dropbear"
 SCRIPT_CKSUM=$(cksum "$0" | awk '{print $1 ":" $2}')
-BUILD_ID="version=${DROPBEAR_VERSION} tag=${DROPBEAR_TAG} image=${TOOLCHAIN_IMAGE} script=${SCRIPT_CKSUM}"
+PATCH_CKSUM=$(
+    for patch_file in "$PATCH_DIR"/*.patch; do
+        cksum <"$patch_file"
+    done | cksum | awk '{print $1 ":" $2}'
+)
+BUILD_ID="version=${DROPBEAR_VERSION} tag=${DROPBEAR_TAG} image=${TOOLCHAIN_IMAGE} script=${SCRIPT_CKSUM} patches=${PATCH_CKSUM}"
 
 mkdir -p "$(dirname "$SOURCE_ARCHIVE")" "$RUNTIME_BIN_DIR"
 
@@ -41,6 +47,43 @@ echo "Building Dropbear ${DROPBEAR_VERSION} for MLP1 (log: $BUILD_LOG)"
 rm -rf "$SOURCE_DIR"
 mkdir -p "$SOURCE_DIR"
 tar -xzf "$SOURCE_ARCHIVE" -C "$SOURCE_DIR" --strip-components=1
+for patch_file in "$PATCH_DIR"/*.patch; do
+    echo "Applying $(basename "$patch_file")"
+    patch --batch --forward --fuzz=0 -d "$SOURCE_DIR" -p1 < "$patch_file"
+done
+
+# These assertions bind each security-sensitive hunk to the intended function.
+# A pinned tarball and content hash prevent silent source drift; these checks
+# additionally make a misplaced-but-applicable patch fail before compilation.
+test "$(grep -c '^int umrk_service_managed(void);$' "$SOURCE_DIR/src/dbutil.h")" -eq 1
+test "$(grep -c '^void umrk_service_arm_child(pid_t expected_parent);$' "$SOURCE_DIR/src/dbutil.h")" -eq 1
+test "$(grep -c '^void umrk_service_arm_guardian(pid_t expected_parent);$' "$SOURCE_DIR/src/dbutil.h")" -eq 1
+test "$(grep -c '^void umrk_service_rearm_child(void);$' "$SOURCE_DIR/src/dbutil.h")" -eq 1
+test "$(grep -c '^void umrk_service_cleanup_descendants(void);$' "$SOURCE_DIR/src/dbutil.h")" -eq 1
+test "$(grep -c 'umrk_service_arm_child(expected_parent);' "$SOURCE_DIR/src/dbutil.c")" -eq 1
+test "$(grep -c 'umrk_service_arm_guardian(expected_parent);' "$SOURCE_DIR/src/svr-main.c")" -eq 1
+test "$(grep -c 'umrk_service_arm_child(expected_parent);' "$SOURCE_DIR/src/svr-chansession.c")" -eq 1
+test "$(grep -c 'umrk_service_rearm_child();' "$SOURCE_DIR/src/svr-chansession.c")" -eq 1
+test "$(grep -c 'umrk_service_cleanup_descendants();' "$SOURCE_DIR/src/svr-session.c")" -eq 1
+grep -Fq 'PR_SET_CHILD_SUBREAPER' "$SOURCE_DIR/src/dbutil.c"
+grep -Fq 'if (!umrk_service_managed() && setsid() < 0)' "$SOURCE_DIR/src/svr-main.c"
+awk '
+    /void umrk_service_arm_child\(pid_t expected_parent\)/ { in_child = 1 }
+    in_child && /umrk_connection_guardian = 0;/ { reset_guardian = 1 }
+    in_child && /^}/ { exit !reset_guardian }
+    END { if (!in_child) exit 1 }
+' "$SOURCE_DIR/src/dbutil.c"
+if grep -Fq 'addnewvar("UMRK_SERVICE_LEASE_FD"' "$SOURCE_DIR/src/svr-chansession.c"; then
+    echo "patched Dropbear must not export the generation lease to login shells" >&2
+    exit 1
+fi
+awk '
+    /void run_command\(const char\* argv0/ { in_run = 1 }
+    in_run && /for \(i = 3; i <= maxfd; i\+\+\)/ { saw_loop = 1 }
+    in_run && saw_loop && /m_close\(i\)/ { saw_close = 1 }
+    in_run && /execv\(argv0, args\)/ { exit !(saw_loop && saw_close) }
+    END { if (!in_run) exit 1 }
+' "$SOURCE_DIR/src/dbutil.c"
 
 cat > "$BUILD_SCRIPT" <<'SH'
 set -eu
@@ -84,7 +127,7 @@ if [ "${DROPBEAR_VERBOSE:-0}" = "1" ]; then
         -e DROPBEAR_SOURCE_DIR="/workspace/ssh-server/${BUILD_DIR}/third_party/dropbear-${DROPBEAR_VERSION}" \
         -e DROPBEAR_OUTPUT_DIR="/workspace/ssh-server/${BUILD_DIR}/runtime/bin" \
         -e DROPBEAR_VERBOSE=1 \
-        -v "$(dirname "$ROOT_DIR")":/workspace \
+        -v "$ROOT_DIR":/workspace/ssh-server \
         -w /workspace/ssh-server \
         "$TOOLCHAIN_IMAGE" \
         sh "/workspace/ssh-server/${BUILD_DIR}/third_party/dropbear-build.sh" | tee "$BUILD_LOG"
@@ -92,7 +135,7 @@ else
     docker run --rm \
         -e DROPBEAR_SOURCE_DIR="/workspace/ssh-server/${BUILD_DIR}/third_party/dropbear-${DROPBEAR_VERSION}" \
         -e DROPBEAR_OUTPUT_DIR="/workspace/ssh-server/${BUILD_DIR}/runtime/bin" \
-        -v "$(dirname "$ROOT_DIR")":/workspace \
+        -v "$ROOT_DIR":/workspace/ssh-server \
         -w /workspace/ssh-server \
         "$TOOLCHAIN_IMAGE" \
         sh "/workspace/ssh-server/${BUILD_DIR}/third_party/dropbear-build.sh" > "$BUILD_LOG" 2>&1 || {
