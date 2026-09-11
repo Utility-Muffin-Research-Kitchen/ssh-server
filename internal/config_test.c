@@ -75,6 +75,33 @@ static void test_weak_password_is_removed(const char *app_root) {
     assert(strstr(error, "at least 12") != NULL);
 }
 
+static void test_uncredentialed_defaults_fail_with_message(const char *app_root) {
+    char temp[] = "/tmp/umrk-ssh-unconfigured-test.XXXXXX";
+    char *root = mkdtemp(temp);
+    char state_root[4096];
+    char start_dir[4096];
+    char error[512] = {0};
+    umrk_ssh_paths paths;
+    umrk_ssh_config config;
+
+    assert(root != NULL);
+    join_path(state_root, sizeof(state_root), root, "state");
+    join_path(start_dir, sizeof(start_dir), root, "start");
+    assert(setenv("UMRK_SSH_STATE_DIR", state_root, 1) == 0);
+    assert(setenv("UMRK_SSH_APP_ROOT", app_root, 1) == 0);
+    assert(umrk_ssh_paths_init(&paths, error, sizeof(error)) == 0);
+
+    /* Fresh install: defaults enable password auth with no password set.
+       apply_account must reject with a clear message, not the empty status
+       the short-circuit previously produced. */
+    umrk_ssh_config_set_defaults(&config);
+    assert(snprintf(config.start_dir, sizeof(config.start_dir), "%s", start_dir) <
+           (int)sizeof(config.start_dir));
+    assert(umrk_ssh_apply_account(&config, &paths, error, sizeof(error)) != 0);
+    assert(error[0] != '\0');
+    assert(strstr(error, "password") != NULL);
+}
+
 static void test_account_publish_and_authorized_keys(const char *app_root) {
     char temp[] = "/tmp/umrk-ssh-account-test.XXXXXX";
     char *root = mkdtemp(temp);
@@ -196,6 +223,7 @@ int main(void) {
     assert((st.st_mode & 0777) == 0600);
 
     test_weak_password_is_removed(app_root);
+    test_uncredentialed_defaults_fail_with_message(app_root);
     test_account_publish_and_authorized_keys(app_root);
 
     puts("PASS config-test hash migration, password floor, atomic account publish, and safe authorized_keys");

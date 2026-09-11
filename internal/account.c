@@ -873,11 +873,18 @@ int umrk_ssh_apply_account(const umrk_ssh_config *cfg, const umrk_ssh_paths *pat
     }
 
     if (umrk__validate_username(cfg->username, status, status_len) != 0 ||
-        (cfg->password_auth_enabled &&
-         (!cfg->password_configured ||
-          umrk__validate_password_hash(cfg->password_hash, status, status_len) != 0)) ||
         umrk__validate_start_dir(cfg->start_dir, status, status_len) != 0) {
         return -1;
+    }
+    if (cfg->password_auth_enabled) {
+        if (!cfg->password_configured) {
+            umrk__set_error(status, status_len, "%s",
+                            "password auth is enabled without a configured password; set a password or switch to key-only mode");
+            return -1;
+        }
+        if (umrk__validate_password_hash(cfg->password_hash, status, status_len) != 0) {
+            return -1;
+        }
     }
 
     if (umrk_ssh_ensure_dir(paths->state_root, 0755, status, status_len) != 0) {
