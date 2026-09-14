@@ -10,7 +10,10 @@
     "id": "org.umrk.sshserver",
     "run": {
       "path": "launch.sh",
-      "args": ["service", "run"]
+      "args": [
+        "service",
+        "run"
+      ]
     },
     "restart": "on-failure",
     "default_enabled": false,
@@ -23,7 +26,15 @@
   },
   "state": {
     "root": "umrk-ssh-server",
-    "revoke_on_uninstall": ["config.ini", "authorized_keys"],
-    "retained_roots": ["hostkeys", "logs"]
-  }
+    "revoke_on_uninstall": [
+      "config.ini",
+      "authorized_keys"
+    ],
+    "retained_roots": [
+      "hostkeys",
+      "logs"
+    ]
+  },
+  "author": "Helaas, UMRK",
+  "description": "SSH access for the device, bundling a Dropbear runtime as a supervised Leaf service with a screen to start and stop it, so the launcher carries no SSH runtime of its own."
 }
