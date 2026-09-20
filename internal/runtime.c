@@ -463,7 +463,9 @@ int umrk_ssh_service_run(umrk_ssh_config *cfg, const umrk_ssh_paths *paths,
     argv[argc++] = dropbear;
     argv[argc++] = "-F";
     argv[argc++] = "-P";
-    argv[argc++] = "/dev/null";
+    /* Dropbear unlinks its PID path on exit, even in foreground mode. An empty
+       path disables that file; /dev/null would delete the system device node. */
+    argv[argc++] = "";
     argv[argc++] = "-p";
     argv[argc++] = cfg->bind_address;
     argv[argc++] = "-r";
